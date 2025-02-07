@@ -38,6 +38,7 @@ public:
     MOCK_METHOD(Error, ASN1DecodeOctetString, (const Array<uint8_t>&, Array<uint8_t>&), (override));
     MOCK_METHOD(Error, ASN1DecodeOID, (const Array<uint8_t>&, Array<uint8_t>&), (override));
     MOCK_METHOD(RetWithError<uuid::UUID>, CreateUUIDv5, (const uuid::UUID&, const Array<uint8_t>&), (override));
+    MOCK_METHOD(Error, GenerateRandomString, (String&), (override));
 };
 
 } // namespace x509

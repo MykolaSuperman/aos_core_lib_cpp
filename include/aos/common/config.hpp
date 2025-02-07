@@ -761,6 +761,13 @@
 #endif
 
 /**
+ * Maximum length of random.
+ */
+#ifndef AOS_CONFIG_CRYPTO_RANDOM_LEN
+#define AOS_CONFIG_CRYPTO_RANDOM_LEN 64
+#endif
+
+/**
  * Maximum length of PKCS11 slot description.
  */
 #ifndef AOS_CONFIG_PKCS11_SLOT_DESCRIPTION_LEN

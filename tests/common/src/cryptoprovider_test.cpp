@@ -1045,3 +1045,39 @@ TEST_F(CryptoProviderTest, UnimplementedHashAlgorithm)
     ASSERT_TRUE(err.Is(aos::ErrorEnum::eNotSupported));
     ASSERT_EQ(hasherPtr.Get(), nullptr);
 }
+
+TEST_F(CryptoProviderTest, GenerateRandomString)
+{
+    aos::crypto::MbedTLSCryptoProvider provider;
+    ASSERT_EQ(provider.Init(), aos::ErrorEnum::eNone);
+
+    const size_t     testSizes[] = {8, 16, 32};
+    constexpr size_t maxTestSize = 32;
+    constexpr size_t bufferSize  = maxTestSize;
+
+    for (auto size : testSizes) {
+        aos::StaticString<bufferSize> result1;
+        aos::StaticString<bufferSize> result2;
+
+        result1.Resize(size);
+        result2.Resize(size);
+
+        ASSERT_EQ(provider.GenerateRandomString(result1), aos::ErrorEnum::eNone);
+        ASSERT_EQ(provider.GenerateRandomString(result2), aos::ErrorEnum::eNone);
+
+        ASSERT_FALSE(result1.IsEmpty());
+        ASSERT_FALSE(result2.IsEmpty());
+
+        ASSERT_EQ(result1.Size(), size);
+        ASSERT_EQ(result2.Size(), size);
+
+        ASSERT_NE(result1, result2);
+
+        for (const auto& c : result1) {
+            ASSERT_TRUE(isxdigit(c));
+        }
+        for (const auto& c : result2) {
+            ASSERT_TRUE(isxdigit(c));
+        }
+    }
+}

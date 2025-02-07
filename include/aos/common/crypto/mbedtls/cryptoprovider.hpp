@@ -181,6 +181,14 @@ public:
      */
     RetWithError<UniquePtr<HashItf>> CreateHash(Hash algorithm) override;
 
+    /**
+     * Generates random string.
+     *
+     * @param[out] result generated string.
+     * @return Error.
+     */
+    Error GenerateRandomString(String& result) override;
+
 private:
     class MBedTLSHash : public crypto::HashItf, private NonCopyable {
     public:

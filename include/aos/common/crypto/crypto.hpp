@@ -150,6 +150,11 @@ constexpr auto cSHA1InputDataSize = AOS_CONFIG_CRYPTO_SHA1_INPUT_SIZE;
 constexpr auto cSignatureSize = AOS_CONFIG_CRYPTO_SIGNATURE_SIZE;
 
 /**
+ * Maximum length of random.
+ */
+constexpr auto cRandomLen = AOS_CONFIG_CRYPTO_RANDOM_LEN;
+
+/**
  * Supported key types.
  */
 class KeyAlgorithm {
@@ -683,6 +688,14 @@ public:
      * @result RetWithError<uuid::UUID>.
      */
     virtual RetWithError<uuid::UUID> CreateUUIDv5(const uuid::UUID& space, const Array<uint8_t>& name) = 0;
+
+    /**
+     * Generates random string.
+     *
+     * @param[out] result generated string.
+     * @return Error.
+     */
+    virtual Error GenerateRandomString(String& result) = 0;
 
     /**
      * Destroys object instance.

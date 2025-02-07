@@ -619,6 +619,34 @@ RetWithError<UniquePtr<HashItf>> MbedTLSCryptoProvider::CreateHash(Hash algorith
     return {UniquePtr<HashItf>(Move(hasher)), ErrorEnum::eNone};
 }
 
+Error MbedTLSCryptoProvider::GenerateRandomString(String& result)
+{
+    size_t bytesNeeded = result.Size() / 2;
+    if (bytesNeeded > cRandomLen) {
+        bytesNeeded = cRandomLen;
+    }
+
+    StaticArray<uint8_t, cRandomLen> randomBytes;
+    mbedtls_ctr_drbg_context         ctrDrbg;
+    mbedtls_entropy_context          entropy;
+
+    mbedtls_ctr_drbg_init(&ctrDrbg);
+    mbedtls_entropy_init(&entropy);
+
+    auto freeDRBG    = DeferRelease(&ctrDrbg, mbedtls_ctr_drbg_free);
+    auto freeEntropy = DeferRelease(&entropy, mbedtls_entropy_free);
+
+    if (auto ret = mbedtls_ctr_drbg_seed(&ctrDrbg, mbedtls_entropy_func, &entropy, nullptr, 0); ret != 0) {
+        return AOS_ERROR_WRAP(ret);
+    }
+
+    if (auto ret = mbedtls_ctr_drbg_random(&ctrDrbg, randomBytes.Get(), bytesNeeded); ret != 0) {
+        return AOS_ERROR_WRAP(ret);
+    }
+
+    return result.ByteArrayToHex(Array<uint8_t>(randomBytes.Get(), bytesNeeded));
+}
+
 /***********************************************************************************************************************
  * Private
  **********************************************************************************************************************/
