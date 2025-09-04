@@ -312,9 +312,9 @@ using SubjectStaticArray = StaticArray<Identifier, cMaxNumSubjects>;
  * Update image status.
  */
 struct UpdateImageStatus {
-    uuid::UUID  mImageID;
-    ImageStatus mStatus;
-    Error       mError;
+    uuid::UUID mImageID;
+    ImageState mStatus;
+    Error      mError;
 
     /**
      * Compares image status.
