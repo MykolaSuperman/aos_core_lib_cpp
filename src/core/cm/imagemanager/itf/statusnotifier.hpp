@@ -11,6 +11,8 @@
 
 namespace aos::cm::imagemanager {
 
+constexpr auto cMaxNumListeners = 10;
+
 /**
  * Interface for receiving notification about update items statuses.
  */
@@ -24,16 +26,16 @@ public:
     /**
      * Notifies about image status change.
      *
-     * @param urn updated image urn.
+     * @param id updated image id.
      */
-    virtual void OnImageStatusChanged(const String& urn, const cloudprotocol::UpdateImageStatus& status) = 0;
+    virtual void OnImageStatusChanged(const uuid::UUID& id, const cloudprotocol::UpdateImageStatus& status) = 0;
 
     /**
      * Notifies about update item removal.
      *
-     * @param urn removed update item urn.
+     * @param id removed update item id.
      */
-    virtual void OnUpdateItemRemoved(const String& urn) = 0;
+    virtual void OnUpdateItemRemoved(const uuid::UUID& id) = 0;
 };
 
 /**

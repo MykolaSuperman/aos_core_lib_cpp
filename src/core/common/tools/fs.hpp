@@ -317,6 +317,15 @@ Error WriteStringToFile(const String& fileName, const String& text, uint32_t per
  */
 RetWithError<size_t> CalculateSize(const String& path);
 
+/**
+ * Returns base name of the path.
+ *
+ * @param path path.
+ * @param base base name.
+ * @return Error.
+ */
+Error BaseName(const String& path, String& base);
+
 } // namespace fs
 } // namespace aos
 

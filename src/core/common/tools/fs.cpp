@@ -5,6 +5,7 @@
  */
 
 #include <fcntl.h>
+#include <libgen.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -510,6 +511,18 @@ RetWithError<size_t> CalculateSize(const String& path)
     }
 
     return {size};
+}
+
+Error BaseName(const String& path, String& base)
+{
+    if (auto err = base.Resize(path.MaxSize()); !err.IsNone()) {
+        return err;
+    }
+
+    base = path.CStr();
+    base = basename(base.Get());
+
+    return base.Resize(strlen(base.CStr()));
 }
 
 } // namespace aos::fs
