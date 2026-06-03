@@ -74,6 +74,19 @@ public:
     virtual Error MoveLinkToNamespace(const String& ifname, const String& netNSPath) = 0;
 
     /**
+     * Renames a link.
+     *
+     * The link must be down. If netNSPath is non-empty, the operation runs
+     * inside that namespace.
+     *
+     * @param ifname current interface name.
+     * @param newName new interface name.
+     * @param netNSPath optional path to the netns; empty for current.
+     * @return Error.
+     */
+    virtual Error RenameLink(const String& ifname, const String& newName, const String& netNSPath) = 0;
+
+    /**
      * Assigns an IP address (CIDR form "ip/mask") to an interface.
      *
      * If netNSPath is non-empty, the operation runs inside that namespace.
