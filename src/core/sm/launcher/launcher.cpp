@@ -1236,8 +1236,16 @@ Error Launcher::CreateNetwork(
     }
 
     if (auto err = mNetworkManager->CreateInstanceNetwork(instanceID, instance.mOwnerID, *networkConfig);
-        !err.IsNone() && !err.Is(ErrorEnum::eAlreadyExist)) {
-        return err;
+        !err.IsNone()) {
+        if (!err.Is(ErrorEnum::eAlreadyExist)) {
+            return err;
+        }
+
+        // TODO(debug): AlreadyExist is treated as benign here, but it can also
+        // mask an allocation failure (e.g. CM "host already exists"); log to
+        // confirm which instances hit this. Remove once diagnosed.
+        LOG_WRN() << "CreateInstanceNetwork returned AlreadyExist, treating as benign"
+                  << Log::Field("instanceID", instanceID) << Log::Field(err);
     }
 
     return ErrorEnum::eNone;
