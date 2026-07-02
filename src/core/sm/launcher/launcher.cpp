@@ -724,6 +724,14 @@ void Launcher::StopAllInstances()
         return;
     }
 
+    // Coalesce every instance's firewall/traffic-monitor nft teardown into one
+    // transaction: the per-instance stop tasks accumulate their nft commands and
+    // we flush them once, after the pool drains, instead of paying a global-mutex
+    // + kernel round-trip per instance.
+    if (auto err = mNetworkManager->BeginBatch(); !err.IsNone()) {
+        LOG_ERR() << "Can't begin network teardown batch" << Log::Field(AOS_ERROR_WRAP(err));
+    }
+
     for (auto& instance : mInstances) {
         if (instance.mStatus.mState != InstanceStateEnum::eActive
             || instance.mInfo.mType == UpdateItemTypeEnum::eComponent) {
@@ -739,6 +747,10 @@ void Launcher::StopAllInstances()
 
     if (auto err = mLaunchPool.Wait(); !err.IsNone()) {
         LOG_ERR() << "Thread pool wait failed" << Log::Field(AOS_ERROR_WRAP(err));
+    }
+
+    if (auto err = mNetworkManager->FlushBatch(); !err.IsNone()) {
+        LOG_ERR() << "Can't flush network teardown batch" << Log::Field(AOS_ERROR_WRAP(err));
     }
 
     if (auto err = mLaunchPool.Shutdown(); !err.IsNone()) {
