@@ -294,7 +294,8 @@ protected:
         EXPECT_CALL(mDNSServer, RemoveHost(aos::String("leftover-instance"))).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mBandwidth, Clear(_)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mFirewall, RemoveInstance(_)).WillOnce(Return(aos::ErrorEnum::eNone));
-        EXPECT_CALL(mBridgeNetwork, Detach(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
+        // The host veth is no longer detached synchronously on cleanup; the instance
+        // netns teardown reaps it asynchronously.
         EXPECT_CALL(mNetns, DeleteNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mStorage, UpdateInstanceNetworkInfo(_)).WillOnce(Return(aos::ErrorEnum::eNone));
     }
@@ -325,7 +326,6 @@ protected:
         EXPECT_CALL(mDNSServer, RemoveHost(_)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mBandwidth, Clear(_)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mFirewall, RemoveInstance(_)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
-        EXPECT_CALL(mBridgeNetwork, Detach(_, _)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
     }
 
     StrictMock<StorageMock>                                                               mStorage;
@@ -896,7 +896,7 @@ TEST_F(NetworkManagerTest, StopReleaseAndRecreateInstance)
     ASSERT_EQ(mNetManager->StartInstanceNetwork(instanceID, networkID), aos::ErrorEnum::eNone);
 }
 
-TEST_F(NetworkManagerTest, StopInstanceNetwork_FailOnDetachError)
+TEST_F(NetworkManagerTest, StopInstanceNetwork_FailOnFirewallRemoveError)
 {
     const aos::String instanceID      = "test-instance";
     const aos::String networkID       = "test-network";
@@ -929,8 +929,7 @@ TEST_F(NetworkManagerTest, StopInstanceNetwork_FailOnDetachError)
     EXPECT_CALL(mTrafficMonitor, StopInstanceMonitoring(instanceID)).WillOnce(Return(aos::ErrorEnum::eNone));
     EXPECT_CALL(mDNSServer, RemoveHost(_)).WillOnce(Return(aos::ErrorEnum::eNone));
     EXPECT_CALL(mBandwidth, Clear(_)).WillOnce(Return(aos::ErrorEnum::eNone));
-    EXPECT_CALL(mFirewall, RemoveInstance(_)).WillOnce(Return(aos::ErrorEnum::eNone));
-    EXPECT_CALL(mBridgeNetwork, Detach(_, _)).WillOnce(Return(aos::ErrorEnum::eRuntime));
+    EXPECT_CALL(mFirewall, RemoveInstance(_)).WillOnce(Return(aos::ErrorEnum::eRuntime));
     EXPECT_CALL(mNetns, DeleteNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
     EXPECT_CALL(mNetIf, DeleteLink(_)).Times(2).WillRepeatedly(Return(aos::ErrorEnum::eNone));
 
