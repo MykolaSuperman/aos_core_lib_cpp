@@ -861,7 +861,8 @@ Error NetworkManager::EnsureNodeNetworkPhysical(const String& networkID)
 Error NetworkManager::DeleteInstanceNetworkConfig(const String& instanceID, const String& networkID)
 {
     StaticString<cInterfaceLen> hostIfName;
-    DNSServerItf*               dnsServer = nullptr;
+    DNSServerItf*               dnsServer    = nullptr;
+    bool                        hasBandwidth = false;
 
     {
         LockGuard lock {mMutex};
@@ -871,7 +872,8 @@ Error NetworkManager::DeleteInstanceNetworkConfig(const String& instanceID, cons
         }
 
         if (auto it = mInstanceNetworkInfos.Find(instanceID); it != mInstanceNetworkInfos.end()) {
-            hostIfName = it->mSecond.mHostIfName;
+            hostIfName   = it->mSecond.mHostIfName;
+            hasBandwidth = it->mSecond.mNetworkConfig.mIngressKbit > 0 || it->mSecond.mNetworkConfig.mEgressKbit > 0;
         } else {
             LOG_WRN() << "Instance network info not found for cleanup" << Log::Field("instanceID", instanceID);
         }
@@ -892,8 +894,12 @@ Error NetworkManager::DeleteInstanceNetworkConfig(const String& instanceID, cons
         }
         profile.Step("DNSRemoveHost");
 
-        if (auto errClear = mBandwidth->Clear(hostIfName); !errClear.IsNone() && err.IsNone()) {
-            err = AOS_ERROR_WRAP(errClear);
+        // Only clear shaping if it was actually applied (non-zero limits);
+        // otherwise there is nothing installed and the tc round-trips are wasted.
+        if (hasBandwidth) {
+            if (auto errClear = mBandwidth->Clear(hostIfName); !errClear.IsNone() && err.IsNone()) {
+                err = AOS_ERROR_WRAP(errClear);
+            }
         }
         profile.Step("BandwidthClear");
 
