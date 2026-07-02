@@ -9,10 +9,64 @@
 
 #include <core/common/tools/logger.hpp>
 #include <core/common/tools/memory.hpp>
+#include <core/common/tools/time.hpp>
 
 #include "networkmanager.hpp"
 
 namespace aos::sm::networkmanager {
+
+namespace {
+
+/***********************************************************************************************************************
+ * Profiling helpers (temporary instrumentation)
+ **********************************************************************************************************************/
+
+// RAII timer: logs elapsed microseconds for the enclosing scope on destruction.
+class ScopedTimer {
+public:
+    explicit ScopedTimer(const char* name)
+        : mName(name)
+        , mStart(Time::Now(CLOCK_MONOTONIC))
+    {
+    }
+
+    ~ScopedTimer()
+    {
+        const auto elapsed = Time::Now(CLOCK_MONOTONIC).Sub(mStart);
+
+        LOG_DBG() << "[profile] " << mName << Log::Field("us", static_cast<int>(elapsed.Microseconds()));
+    }
+
+private:
+    const char* mName;
+    Time        mStart;
+};
+
+// Logs per-step deltas between successive Step() calls.
+class StepProfiler {
+public:
+    explicit StepProfiler(const char* scope)
+        : mScope(scope)
+        , mStepStart(Time::Now(CLOCK_MONOTONIC))
+    {
+    }
+
+    void Step(const char* step)
+    {
+        const auto now = Time::Now(CLOCK_MONOTONIC);
+
+        LOG_DBG() << "[profile] " << mScope << ": " << step
+                  << Log::Field("us", static_cast<int>(now.Sub(mStepStart).Microseconds()));
+
+        mStepStart = now;
+    }
+
+private:
+    const char* mScope;
+    Time        mStepStart;
+};
+
+} // namespace
 
 /***********************************************************************************************************************
  * Public
@@ -308,6 +362,9 @@ Error NetworkManager::StopInstanceNetwork(const String& instanceID, const String
         return ErrorEnum::eNone;
     }
 
+    ScopedTimer  profileTotal {"StopInstanceNetwork total"};
+    StepProfiler profile {"StopInstanceNetwork"};
+
     Error err;
 
     if (auto errStop = mNetMonitor->StopInstanceMonitoring(instanceID); !errStop.IsNone()) {
@@ -315,16 +372,19 @@ Error NetworkManager::StopInstanceNetwork(const String& instanceID, const String
             err = errStop;
         }
     }
+    profile.Step("StopInstanceMonitoring");
 
     if (auto errDelete = DeleteInstanceNetworkConfig(instanceID, networkID); !errDelete.IsNone()) {
         if (err.IsNone()) {
             err = errDelete;
         }
     }
+    profile.Step("DeleteInstanceNetworkConfig");
 
     if (auto errRemove = RemoveInstanceFromCache(instanceID, networkID); !errRemove.IsNone() && err.IsNone()) {
         err = errRemove;
     }
+    profile.Step("RemoveInstanceFromCache");
 
     {
         LockGuard lock {mMutex};
@@ -344,6 +404,8 @@ Error NetworkManager::StopInstanceNetwork(const String& instanceID, const String
             } else {
                 mPhysicalNetworks.Remove(networkID);
             }
+
+            profile.Step("ClearNetwork");
         }
     }
 
@@ -782,6 +844,8 @@ Error NetworkManager::DeleteInstanceNetworkConfig(const String& instanceID, cons
         }
     }
 
+    StepProfiler profile {"DeleteInstanceNetworkConfig"};
+
     Error err;
 
     if (!hostIfName.IsEmpty()) {
@@ -793,20 +857,25 @@ Error NetworkManager::DeleteInstanceNetworkConfig(const String& instanceID, cons
             LOG_WRN() << "DNS server not found for cleanup" << Log::Field("instanceID", instanceID)
                       << Log::Field("networkID", networkID);
         }
+        profile.Step("DNSRemoveHost");
 
         if (auto errClear = mBandwidth->Clear(hostIfName); !errClear.IsNone() && err.IsNone()) {
             err = AOS_ERROR_WRAP(errClear);
         }
+        profile.Step("BandwidthClear");
 
         if (auto errRemove = mFirewall->RemoveInstance(instanceID); !errRemove.IsNone() && err.IsNone()) {
             err = AOS_ERROR_WRAP(errRemove);
         }
+        profile.Step("FirewallRemoveInstance");
 
         if (!bridgeIfName.IsEmpty()) {
             if (auto errDetach = mBridgeNetwork->Detach(instanceID, bridgeIfName);
                 !errDetach.IsNone() && err.IsNone()) {
                 err = AOS_ERROR_WRAP(errDetach);
             }
+
+            profile.Step("BridgeDetach");
         }
     } else {
         LOG_DBG() << "Instance was never started, skipping itf cleanup" << Log::Field("instanceID", instanceID);
@@ -815,6 +884,7 @@ Error NetworkManager::DeleteInstanceNetworkConfig(const String& instanceID, cons
     if (auto errDel = mNetns->DeleteNetworkNamespace(instanceID); !errDel.IsNone() && err.IsNone()) {
         err = errDel;
     }
+    profile.Step("DeleteNetworkNamespace");
 
     if (err.IsNone() && !hostIfName.IsEmpty()) {
         auto info        = MakeUnique<InstanceNetworkInfo>(&mAllocator);
