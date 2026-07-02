@@ -203,6 +203,22 @@ public:
     virtual Error RemoveTrafficMonitorData(const String& chain) = 0;
 
     /**
+     * Begins a storage transaction so that subsequent writes are committed
+     * together (one fsync) by CommitTransaction. Optional: storages that do not
+     * support batching keep the default no-op and commit per write as before.
+     *
+     * @return Error.
+     */
+    virtual Error BeginTransaction() { return ErrorEnum::eNone; }
+
+    /**
+     * Commits the current storage transaction (see BeginTransaction).
+     *
+     * @return Error.
+     */
+    virtual Error CommitTransaction() { return ErrorEnum::eNone; }
+
+    /**
      * Destroys storage interface.
      */
     virtual ~StorageItf() = default;
