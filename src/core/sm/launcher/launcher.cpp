@@ -5,10 +5,37 @@
  */
 
 #include <core/common/tools/logger.hpp>
+#include <core/common/tools/time.hpp>
 
 #include "launcher.hpp"
 
 namespace aos::sm::launcher {
+
+namespace {
+
+// RAII timer (temporary instrumentation): logs elapsed microseconds for the
+// enclosing scope on destruction under the "[profile]" marker.
+class ScopedTimer {
+public:
+    explicit ScopedTimer(const char* name)
+        : mName(name)
+        , mStart(Time::Now(CLOCK_MONOTONIC))
+    {
+    }
+
+    ~ScopedTimer()
+    {
+        const auto elapsed = Time::Now(CLOCK_MONOTONIC).Sub(mStart);
+
+        LOG_DBG() << "[profile] " << mName << Log::Field("us", static_cast<int>(elapsed.Microseconds()));
+    }
+
+private:
+    const char* mName;
+    Time        mStart;
+};
+
+} // namespace
 
 /***********************************************************************************************************************
  * Public
@@ -659,6 +686,8 @@ void Launcher::StopInstanceTask(aos::sm::launcher::RuntimeItf* runtime, Instance
               << Log::Field("version", instanceData.mInfo.mVersion)
               << Log::Field("runtimeID", instanceData.mInfo.mRuntimeID) << Log::Field("isRemoval", isRemoval);
 
+    ScopedTimer profileInstance {"StopInstance total"};
+
     if (auto err = runtime->StopInstance(instanceData.mInfo, instanceData.mStatus); !err.IsNone()) {
         LOG_ERR() << "Failed to stop instance" << Log::Field("instance", instanceData.mInfo)
                   << Log::Field(AOS_ERROR_WRAP(err));
@@ -687,6 +716,8 @@ void Launcher::StopInstanceTask(aos::sm::launcher::RuntimeItf* runtime, Instance
 
 void Launcher::StopAllInstances()
 {
+    ScopedTimer profileTotal {"StopAllInstances total"};
+
     if (auto err = mLaunchPool.Run(); !err.IsNone()) {
         LOG_ERR() << "Can't start thread pool" << Log::Field(AOS_ERROR_WRAP(err));
 
