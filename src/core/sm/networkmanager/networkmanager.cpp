@@ -296,8 +296,7 @@ Error NetworkManager::CreateInstanceNetwork(
     return ErrorEnum::eNone;
 }
 
-Error NetworkManager::StartInstanceNetwork(
-    const String& instanceID, const String& networkID, const InstanceNetworkRuntimeParams& runtimeParams)
+Error NetworkManager::StartInstanceNetwork(const String& instanceID, const String& networkID)
 {
     LOG_DBG() << "Start instance network" << Log::Field("instanceID", instanceID) << Log::Field("networkID", networkID);
 
@@ -337,10 +336,103 @@ Error NetworkManager::StartInstanceNetwork(
         return err;
     }
 
-    err = AddInstanceToNetwork(
-        instanceID, networkID, cachedInfo->mNetworkConfig, cachedInfo->mAllocatedParams, runtimeParams);
+    err = AddInstanceToNetwork(instanceID, networkID, cachedInfo->mNetworkConfig, cachedInfo->mAllocatedParams);
 
     return err;
+}
+
+Error NetworkManager::GetResolvServers(const String& instanceID, Array<StaticString<cIPLen>>& servers) const
+{
+    StaticString<cIDLen>                                 networkID;
+    StaticArray<StaticString<cIPLen>, cMaxNumDNSServers> dns;
+    StaticString<cIPLen>                                 bridgeIP;
+
+    {
+        LockGuard lock {mMutex};
+
+        auto it = mInstanceNetworkInfos.Find(instanceID);
+        if (it == mInstanceNetworkInfos.end()) {
+            return AOS_ERROR_WRAP(Error(ErrorEnum::eNotFound, "instance network info not found"));
+        }
+
+        networkID = it->mSecond.mNetworkID;
+        dns       = it->mSecond.mAllocatedParams.mDNSServers;
+
+        if (auto np = mNetworkProviders.Find(networkID); np != mNetworkProviders.end()) {
+            bridgeIP = np->mSecond.mIP;
+        }
+    }
+
+    // Per-bridge dnsmasq listens on the bridge IP - make it the primary resolver.
+    if (!bridgeIP.IsEmpty()) {
+        if (auto err = servers.PushBack(bridgeIP); !err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
+        }
+    }
+
+    for (const auto& server : dns) {
+        if (servers.Find(server) == servers.end()) {
+            if (auto err = servers.PushBack(server); !err.IsNone()) {
+                return AOS_ERROR_WRAP(err);
+            }
+        }
+    }
+
+    if (servers.IsEmpty()) {
+        if (auto err = servers.PushBack("8.8.8.8"); !err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
+        }
+    }
+
+    return ErrorEnum::eNone;
+}
+
+Error NetworkManager::GetHosts(const String& instanceID, Array<Host>& hosts) const
+{
+    StaticString<cIDLen>            networkID;
+    StaticString<cIPLen>            instanceIP;
+    StaticString<cHostNameLen>      hostname;
+    StaticArray<Host, cMaxNumHosts> customHosts;
+
+    {
+        LockGuard lock {mMutex};
+
+        auto it = mInstanceNetworkInfos.Find(instanceID);
+        if (it == mInstanceNetworkInfos.end()) {
+            return AOS_ERROR_WRAP(Error(ErrorEnum::eNotFound, "instance network info not found"));
+        }
+
+        networkID   = it->mSecond.mNetworkID;
+        instanceIP  = it->mSecond.mAllocatedParams.mIP;
+        hostname    = it->mSecond.mNetworkConfig.mHostname;
+        customHosts = it->mSecond.mNetworkConfig.mHosts;
+    }
+
+    if (auto err = hosts.PushBack(Host {"127.0.0.1", "localhost"}); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
+    }
+
+    if (auto err = hosts.PushBack(Host {"::1", "localhost ip6-localhost ip6-loopback"}); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
+    }
+
+    StaticString<cHostNameLen> ownHosts {networkID};
+
+    if (!hostname.IsEmpty()) {
+        ownHosts.Append(" ").Append(hostname);
+    }
+
+    if (auto err = hosts.PushBack(Host {instanceIP, ownHosts}); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
+    }
+
+    for (const auto& host : customHosts) {
+        if (auto err = hosts.PushBack(host); !err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
+        }
+    }
+
+    return ErrorEnum::eNone;
 }
 
 Error NetworkManager::StopInstanceNetwork(const String& instanceID, const String& networkID)
@@ -641,8 +733,7 @@ Error NetworkManager::EnsureNodeNetwork(const String& networkID)
 }
 
 Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const String& networkID,
-    const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams,
-    const InstanceNetworkRuntimeParams& runtimeParams)
+    const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams)
 {
     LOG_DBG() << "Add instance to network" << Log::Field("instanceID", instanceID)
               << Log::Field("networkID", networkID);
@@ -792,16 +883,8 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
         }
     });
 
-    if (err = CreateHostsFile(networkID, networkParams.mIP, networkConfig, runtimeParams.mHostsFilePath);
-        !err.IsNone()) {
-        return err;
-    }
-
-    if (err = CreateResolvConfFile(networkID, runtimeParams.mResolvConfFilePath, bridgeParams.mGateway, networkParams,
-            networkParams.mDNSServers);
-        !err.IsNone()) {
-        return err;
-    }
+    // resolv.conf / hosts are no longer written here; the caller fetches the
+    // data via GetResolvServers/GetHosts and writes the files at its own paths.
 
     if (err = UpdateInstanceNetworkCache(instanceID, networkID, host); !err.IsNone()) {
         return err;

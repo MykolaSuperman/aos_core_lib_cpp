@@ -125,11 +125,27 @@ public:
      *
      * @param instanceID instance ID.
      * @param networkID network ID.
-     * @param runtimeParams runtime parameters.
      * @return Error.
      */
-    Error StartInstanceNetwork(
-        const String& instanceID, const String& networkID, const InstanceNetworkRuntimeParams& runtimeParams) override;
+    Error StartInstanceNetwork(const String& instanceID, const String& networkID) override;
+
+    /**
+     * Returns resolver IPs for the instance (caller prefixes each with "nameserver").
+     *
+     * @param instanceID instance ID.
+     * @param[out] servers resolver IP addresses.
+     * @return Error.
+     */
+    Error GetResolvServers(const String& instanceID, Array<StaticString<cIPLen>>& servers) const override;
+
+    /**
+     * Returns host entries (IP + hostname) for the instance.
+     *
+     * @param instanceID instance ID.
+     * @param[out] hosts host entries.
+     * @return Error.
+     */
+    Error GetHosts(const String& instanceID, Array<Host>& hosts) const override;
 
     /**
      * Stops instance network.
@@ -184,8 +200,7 @@ private:
         const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
 
     Error AddInstanceToNetwork(const String& instanceID, const String& networkID,
-        const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams,
-        const InstanceNetworkRuntimeParams& runtimeParams);
+        const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
 
     using InstanceHosts = StaticArray<StaticString<cHostNameLen>, cMaxNumHosts>;
     using InstanceCache = StaticMap<StaticString<cIDLen>, InstanceHosts, cMaxNumInstances>;
