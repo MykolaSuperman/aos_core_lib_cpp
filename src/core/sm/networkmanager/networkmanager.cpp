@@ -647,11 +647,15 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
     LOG_DBG() << "Add instance to network" << Log::Field("instanceID", instanceID)
               << Log::Field("networkID", networkID);
 
+    ScopedTimer  profileTotal {"AddInstanceToNetwork total"};
+    StepProfiler profile {"AddInstanceToNetwork"};
+
     Error err;
 
     if (err = mNetns->CreateNetworkNamespace(instanceID); !err.IsNone()) {
         return err;
     }
+    profile.Step("CreateNetworkNamespace");
 
     auto cleanupNetworkNamespace = DeferRelease(&instanceID, [this, &err](const String* instanceID) {
         if (!err.IsNone()) {
@@ -688,6 +692,7 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
     if (err = mBridgeNetwork->Attach(instanceID, bridgeParams, attachResult); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
+    profile.Step("Attach");
 
     auto cleanupBridge = DeferRelease(&instanceID, [this, &bridgeParams, &err](const String* id) {
         if (!err.IsNone()) {
@@ -706,6 +711,7 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
     if (err = mFirewall->AddInstance(instanceID, *firewallParams); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
+    profile.Step("FirewallAdd");
 
     auto cleanupFirewall = DeferRelease(&instanceID, [this, &err](const String* id) {
         if (!err.IsNone()) {
@@ -725,6 +731,7 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
     if (err = mBandwidth->Apply(attachResult.mHostIfName, bandwidthParams); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
+    profile.Step("BandwidthApply");
 
     auto cleanupBandwidth = DeferRelease(&attachResult.mHostIfName, [this, &err](const String* ifName) {
         if (!err.IsNone()) {
@@ -758,6 +765,7 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
     if (err = dnsServer->AddHost(instanceID, dnsParams); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
+    profile.Step("DNSAddHost");
 
     auto cleanupDNSHost = DeferRelease(&instanceID, [dnsServer, &err](const String* id) {
         if (!err.IsNone()) {
@@ -773,6 +781,7 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
 
         return AOS_ERROR_WRAP(err);
     }
+    profile.Step("StartMonitoring");
 
     auto cleanupMonitoring = DeferRelease(&instanceID, [this, &err](const String* id) {
         if (!err.IsNone()) {
@@ -817,6 +826,7 @@ Error NetworkManager::AddInstanceToNetwork(const String& instanceID, const Strin
     if (err = mStorage->UpdateInstanceNetworkInfo(*info); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
+    profile.Step("UpdateStorage");
 
     {
         LockGuard lock {mMutex};
