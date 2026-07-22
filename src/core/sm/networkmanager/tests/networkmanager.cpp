@@ -292,8 +292,8 @@ protected:
         EXPECT_CALL(mDNSName, CreateServer(_, _))
             .WillOnce(Return(aos::RetWithError<DNSServerItf*> {&mDNSServer, aos::ErrorEnum::eNone}));
         EXPECT_CALL(mDNSServer, RemoveHost(aos::String("leftover-instance"))).WillOnce(Return(aos::ErrorEnum::eNone));
-        EXPECT_CALL(mBandwidth, Clear(_)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mFirewall, RemoveInstance(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+        // The leftover instance has no bandwidth shaping, so no bandwidth clear is expected.
         // The host veth is no longer detached synchronously on cleanup; the instance
         // netns teardown reaps it asynchronously.
         EXPECT_CALL(mNetns, DeleteNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
@@ -324,7 +324,6 @@ protected:
     void ExpectDeleteInstanceCalls(int times = 1)
     {
         EXPECT_CALL(mDNSServer, RemoveHost(_)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
-        EXPECT_CALL(mBandwidth, Clear(_)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mFirewall, RemoveInstance(_)).Times(times).WillRepeatedly(Return(aos::ErrorEnum::eNone));
     }
 
@@ -682,6 +681,7 @@ TEST_F(NetworkManagerTest, StartInstanceNetwork_FailOnTrafficMonitorError)
     EXPECT_CALL(mNetns, GetNetworkNamespacePath(_))
         .WillOnce(Return(aos::RetWithError<aos::StaticString<aos::cFilePathLen>> {{}, aos::ErrorEnum::eNone}));
     EXPECT_CALL(mNetns, DeleteNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mBridgeNetwork, Detach(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
     ExpectDeleteInstanceCalls();
 
     EXPECT_EQ(mNetManager->StartInstanceNetwork(instanceID, networkID), aos::ErrorEnum::eRuntime);
@@ -928,7 +928,6 @@ TEST_F(NetworkManagerTest, StopInstanceNetwork_FailOnFirewallRemoveError)
 
     EXPECT_CALL(mTrafficMonitor, StopInstanceMonitoring(instanceID)).WillOnce(Return(aos::ErrorEnum::eNone));
     EXPECT_CALL(mDNSServer, RemoveHost(_)).WillOnce(Return(aos::ErrorEnum::eNone));
-    EXPECT_CALL(mBandwidth, Clear(_)).WillOnce(Return(aos::ErrorEnum::eNone));
     EXPECT_CALL(mFirewall, RemoveInstance(_)).WillOnce(Return(aos::ErrorEnum::eRuntime));
     EXPECT_CALL(mNetns, DeleteNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
     EXPECT_CALL(mNetIf, DeleteLink(_)).Times(2).WillRepeatedly(Return(aos::ErrorEnum::eNone));
