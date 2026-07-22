@@ -258,6 +258,7 @@ private:
         const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
     Error AddInstanceToNetwork(const String& instanceID, const String& networkID,
         const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
+    Error ReapplyInstancePolicy(const BatchEntry& entry);
     Error RemoveDNSOrphans();
     Error AdoptDNSServer(const String& networkID);
     Error PrepareBridgeParams(
