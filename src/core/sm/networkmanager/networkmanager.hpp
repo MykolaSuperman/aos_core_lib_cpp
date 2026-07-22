@@ -195,17 +195,17 @@ public:
     void OnConnect() override;
 
 private:
-    Error EnsureNodeNetwork(const String& networkID);
-    Error EnsureNodeNetworkPhysical(const String& networkID);
-    Error UpdateInstanceFirewall(const String& instanceID, const String& networkID,
-        const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
-
-    Error AddInstanceToNetwork(const String& instanceID, const String& networkID,
-        const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
-
     using InstanceHosts = StaticArray<StaticString<cHostNameLen>, cMaxNumHosts>;
     using InstanceCache = StaticMap<StaticString<cIDLen>, InstanceHosts, cMaxNumInstances>;
     using NetworkCache  = StaticMap<StaticString<cIDLen>, InstanceCache, cMaxNumOwners>;
+
+    enum class BatchOp { eAdd, eRemove };
+
+    struct BatchEntry {
+        StaticString<cIDLen> mInstanceID;
+        StaticString<cIDLen> mNetworkID;
+        BatchOp              mOp;
+    };
 
     // StartInstanceNetwork keeps its cached InstanceNetworkInfo alive across the nested call to
     // AddInstanceToNetwork, which in turn allocates hosts, bridge/firewall/bandwidth/DNS params and
@@ -252,6 +252,12 @@ private:
     Error InitInstance(const String& instanceID, const String& networkID);
     Error ReconcileInstances();
     Error RemoveFirewallOrphans();
+    Error EnsureNodeNetwork(const String& networkID);
+    Error EnsureNodeNetworkPhysical(const String& networkID);
+    Error UpdateInstanceFirewall(const String& instanceID, const String& networkID,
+        const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
+    Error AddInstanceToNetwork(const String& instanceID, const String& networkID,
+        const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
     Error RemoveDNSOrphans();
     Error AdoptDNSServer(const String& networkID);
     Error PrepareBridgeParams(
@@ -311,6 +317,8 @@ private:
     StaticMap<StaticString<cIDLen>, DNSServerItf*, cMaxNumOwners>                          mDNSServers;
     StaticMap<StaticString<cIDLen>, InstanceNetworkInfo, cMaxNumInstances * cMaxNumOwners> mInstanceNetworkInfos;
     StaticArray<StaticString<cIDLen>, cMaxNumOwners>                                       mPhysicalNetworks;
+    bool                                                                                   mBatchMode {false};
+    StaticArray<BatchEntry, cMaxNumInstances * cMaxNumOwners>                              mBatchEntries;
     StaticAllocator<sizeof(StaticArray<NetworkInfo, cMaxNumOwners>)>                       mNetworkInfosAllocator;
     StaticAllocator<sizeof(StaticArray<InstanceNetworkInfo, cMaxNumInstances>)> mInstanceNetworkInfosAllocator;
 
