@@ -259,6 +259,8 @@ private:
     Error AddInstanceToNetwork(const String& instanceID, const String& networkID,
         const InstanceNetworkConfig& networkConfig, const aos::InstanceNetworkAllocation& networkParams);
     Error ReapplyInstancePolicy(const BatchEntry& entry);
+    void  ReapplyBatchEntries(Array<StaticString<cIDLen>>& failedInstanceIDs);
+    void  ClearBatchState();
     Error RemoveDNSOrphans();
     Error AdoptDNSServer(const String& networkID);
     Error PrepareBridgeParams(
