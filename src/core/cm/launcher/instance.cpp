@@ -408,24 +408,32 @@ Error ServiceInstance::Remove()
 {
     LOG_DBG() << "Remove instance" << Log::Field("instanceID", mInfo.mInstanceIdent);
 
+    Error firstErr = ErrorEnum::eNone;
+
     if (auto err = mStorageState.Remove(mInfo.mInstanceIdent); !err.IsNone() && !err.Is(ErrorEnum::eNotFound)) {
-        return AOS_ERROR_WRAP(err);
+        firstErr = AOS_ERROR_WRAP(err);
     }
 
     if (auto err = mStorage.RemoveInstance(mInfo.mInstanceIdent, mInfo.mVersion);
         !err.IsNone() && !err.Is(ErrorEnum::eNotFound)) {
-        return AOS_ERROR_WRAP(err);
+        if (firstErr.IsNone()) {
+            firstErr = AOS_ERROR_WRAP(err);
+        }
     }
 
     if (auto err = mUIDPool.Release(mInfo.mInstanceIdent); !err.IsNone() && !err.Is(ErrorEnum::eNotFound)) {
-        return AOS_ERROR_WRAP(err);
+        if (firstErr.IsNone()) {
+            firstErr = AOS_ERROR_WRAP(err);
+        }
     }
 
     if (auto err = mGIDPool.Release(mInfo.mInstanceIdent.mItemID); !err.IsNone() && !err.Is(ErrorEnum::eNotFound)) {
-        return AOS_ERROR_WRAP(err);
+        if (firstErr.IsNone()) {
+            firstErr = AOS_ERROR_WRAP(err);
+        }
     }
 
-    return ErrorEnum::eNone;
+    return firstErr;
 }
 
 Error ServiceInstance::Cache(bool disable)
