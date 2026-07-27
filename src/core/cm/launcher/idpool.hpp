@@ -28,8 +28,9 @@ static constexpr auto cGIDRangeEnd = 10000;
 
 /**
  * Max number of locked GIDs simultaneously.
+ * Double the number of update items to avoid exhausting the range when removing instances.
  */
-static constexpr auto cMaxNumLockedGIDs = cMaxNumUpdateItems;
+static constexpr auto cMaxNumLockedGIDs = 2 * cMaxNumUpdateItems;
 
 /**
  * UID range start.
@@ -43,8 +44,9 @@ static constexpr auto cUIDRangeEnd = 10000;
 
 /**
  * Max number of locked UIDs simultaneously.
+ * Double the number of update items to avoid exhausting the range when removing instances.
  */
-static constexpr auto cMaxNumLockedUIDs = cMaxNumInstances;
+static constexpr auto cMaxNumLockedUIDs = 2 * cMaxNumInstances;
 
 /**
  * Pool that manages identifiers with reference counting per key.
@@ -166,10 +168,9 @@ private:
     StaticMap<K, ItemEntry, cMaxNumItems>                      mItems;
 };
 
-using GIDPool
-    = IDPool<StaticString<cIDLen>, gid_t, cGIDRangeBegin, cGIDRangeEnd, cMaxNumLockedGIDs, cMaxNumUpdateItems>;
+using GIDPool = IDPool<StaticString<cIDLen>, gid_t, cGIDRangeBegin, cGIDRangeEnd, cMaxNumLockedGIDs, cMaxNumLockedGIDs>;
 
-using UIDPool = IDPool<InstanceIdent, uid_t, cUIDRangeBegin, cUIDRangeEnd, cMaxNumLockedUIDs, cMaxNumInstances>;
+using UIDPool = IDPool<InstanceIdent, uid_t, cUIDRangeBegin, cUIDRangeEnd, cMaxNumLockedUIDs, cMaxNumLockedUIDs>;
 
 } // namespace aos::cm::launcher
 
