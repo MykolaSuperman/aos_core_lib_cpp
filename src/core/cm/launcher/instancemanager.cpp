@@ -563,11 +563,11 @@ RetWithError<SharedPtr<Instance>> InstanceManager::CreateInstance(const Instance
 
     if (auto err = newInstance->Init(); !err.IsNone()) {
         // Do not leave invalid instance in storage.
-        if (err = newInstance->Remove(); !err.IsNone()) {
-            LOG_ERR() << "Can't remove instance" << Log::Field(err);
+        if (auto rmErr = newInstance->Remove(); !rmErr.IsNone()) {
+            LOG_ERR() << "Can't remove instance" << Log::Field(AOS_ERROR_WRAP(rmErr));
         }
 
-        return {{}, AOS_ERROR_WRAP(err)};
+        return {nullptr, err};
     }
 
     if (auto [_, err] = newInstance->OverrideEnvVars(mEnvVarsOverrides); !err.IsNone()) {
