@@ -1109,6 +1109,11 @@ Error NetworkManager::ReconcileInstances()
             }
         }
 
+        if (err = AdoptDNSServer(entry.mNetworkID); !err.IsNone()) {
+            LOG_WRN() << "Failed to adopt DNS server for leftover cleanup" << Log::Field("networkID", entry.mNetworkID)
+                      << Log::Field(err);
+        }
+
         if (err = DeleteInstanceNetworkConfig(entry.mInstanceID, entry.mNetworkID); !err.IsNone()) {
             LOG_WRN() << "Failed to delete leftover instance network config"
                       << Log::Field("instanceID", entry.mInstanceID) << Log::Field("networkID", entry.mNetworkID)
