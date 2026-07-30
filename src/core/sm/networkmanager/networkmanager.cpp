@@ -105,6 +105,10 @@ Error NetworkManager::Start()
         }
     });
 
+    if (err = RemoveFirewallOrphans(); !err.IsNone()) {
+        return err;
+    }
+
     if (err = RemoveDNSOrphans(); !err.IsNone()) {
         return err;
     }
@@ -1119,6 +1123,34 @@ Error NetworkManager::ReconcileInstances()
                       << Log::Field("instanceID", entry.mInstanceID) << Log::Field("networkID", entry.mNetworkID)
                       << Log::Field(err);
         }
+    }
+
+    return ErrorEnum::eNone;
+}
+
+Error NetworkManager::RemoveFirewallOrphans()
+{
+    auto knownInstanceIDs = MakeUnique<StaticArray<StaticString<cIDLen>, cMaxNumInstances>>(&mAllocator);
+    auto knownMasquerades = MakeUnique<StaticArray<MasqueradeParams, cMaxNumOwners>>(&mAllocator);
+
+    {
+        LockGuard lock {mMutex};
+
+        for (const auto& [instanceID, _] : mInstanceNetworkInfos) {
+            if (auto err = knownInstanceIDs->PushBack(instanceID); !err.IsNone()) {
+                return AOS_ERROR_WRAP(err);
+            }
+        }
+
+        for (const auto& [_, network] : mNetworkProviders) {
+            if (auto err = knownMasquerades->PushBack({network.mSubnet, network.mBridgeIfName}); !err.IsNone()) {
+                return AOS_ERROR_WRAP(err);
+            }
+        }
+    }
+
+    if (auto err = mFirewall->RemoveOrphans(*knownInstanceIDs, *knownMasquerades); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
     }
 
     return ErrorEnum::eNone;

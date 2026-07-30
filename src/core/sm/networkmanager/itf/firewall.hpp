@@ -54,6 +54,14 @@ struct InstanceFirewallParams {
 };
 
 /**
+ * Masquerade rule identity.
+ */
+struct MasqueradeParams {
+    StaticString<cSubnetLen>    mSubnet;
+    StaticString<cInterfaceLen> mOutIfName;
+};
+
+/**
  * Firewall interface.
  *
  * Owns a single nft table (`inet aos`) for the whole SM. Each instance gets
@@ -69,7 +77,8 @@ public:
 
     /**
      * Starts the firewall: creates the `inet aos` table, base chains and
-     * netfilter hooks (forward filter, postrouting nat).
+     * netfilter hooks (forward filter, postrouting nat) when they are absent.
+     * Rules that are already there are left alone.
      *
      * @return Error.
      */
@@ -81,6 +90,21 @@ public:
      * @return Error.
      */
     virtual Error Stop() = 0;
+
+    /**
+     * Removes the instance chains and masquerade rules that no longer belong
+     * to anything known, keeping the rest in place.
+     *
+     * Called on start so that artifacts left by a crashed SM are reaped
+     * without touching the rules of the instances that kept running.
+     *
+     * @param knownInstanceIDs instance ids whose chains must be kept.
+     * @param knownMasquerades masquerade rules that must be kept.
+     * @return Error.
+     */
+    virtual Error RemoveOrphans(
+        const Array<StaticString<cIDLen>>& knownInstanceIDs, const Array<MasqueradeParams>& knownMasquerades)
+        = 0;
 
     /**
      * Adds a per-instance chain with the given input/output access rules.
