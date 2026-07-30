@@ -7,13 +7,44 @@
 #ifndef AOS_CORE_SM_NETWORKMANAGER_ITF_INTERFACEMANAGER_HPP_
 #define AOS_CORE_SM_NETWORKMANAGER_ITF_INTERFACEMANAGER_HPP_
 
+#include <core/common/tools/enum.hpp>
 #include <core/common/types/common.hpp>
+#include <core/common/types/network.hpp>
 
 namespace aos::sm::networkmanager {
 
 /** @addtogroup sm Service Manager
  *  @{
  */
+
+/**
+ * Link kind type.
+ */
+class LinkKindType {
+public:
+    enum class Enum { eUnknown, eBridge, eVlan, eVeth };
+
+    static const Array<const char* const> GetStrings()
+    {
+        static const char* const sLinkKindStrings[] = {"unknown", "bridge", "vlan", "veth"};
+
+        return Array<const char* const>(sLinkKindStrings, ArraySize(sLinkKindStrings));
+    };
+};
+
+using LinkKindEnum = LinkKindType::Enum;
+using LinkKind     = EnumStringer<LinkKindType>;
+
+/**
+ * Network link attributes as seen on the system.
+ */
+struct LinkInfo {
+    StaticString<cInterfaceLen> mName;
+    LinkKind                    mKind;
+    StaticString<cInterfaceLen> mMaster;
+    uint64_t                    mVlanID {};
+    bool                        mUp {};
+};
 
 /**
  * Network interface manager interface.
@@ -24,6 +55,15 @@ public:
      * Destructor.
      */
     virtual ~InterfaceManagerItf() = default;
+
+    /**
+     * Returns link attributes as they are on the system.
+     *
+     * @param ifname interface name.
+     * @param[out] info link attributes.
+     * @return Error, eNotFound if the link doesn't exist.
+     */
+    virtual Error GetLink(const String& ifname, LinkInfo& info) const = 0;
 
     /**
      * Removes interface.
