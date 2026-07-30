@@ -202,14 +202,15 @@ private:
 
     // Start()/OnConnect() run once, outside the concurrent instance-operation hot path, so their
     // allocations are added rather than multiplied by cMaxNumConcurrentItems: RemoveDNSOrphans' known
-    // networks list, ReconcileInstances' leftover entries (instance/network IDs plus host/bridge
-    // interface names, so four ID-sized strings per instance) plus, alive at the same time, either the
-    // InstanceNetworkInfo DeleteInstanceNetworkConfig allocates while clearing a host interface or the
-    // config and hosts AdoptInstance allocates while restoring the runtime cache, and OnConnect's state
-    // sync snapshot.
+    // networks list, RemoveFirewallOrphans' known instance and masquerade lists, ReconcileInstances'
+    // leftover entries (instance/network IDs plus host/bridge interface names, so four ID-sized strings
+    // per instance) plus, alive at the same time, either the InstanceNetworkInfo
+    // DeleteInstanceNetworkConfig allocates while clearing a host interface or the config and hosts
+    // InitInstance allocates while restoring the runtime cache, and OnConnect's state sync snapshot.
     static constexpr auto cAllocatorSize = cMaxOperationAllocatorSize * cMaxNumConcurrentItems
         + sizeof(StaticArray<StaticString<cIDLen>, cMaxNumOwners>)
-        + sizeof(StaticArray<StaticString<cIDLen>, cMaxNumInstances>) * 4 + sizeof(InstanceNetworkInfo)
+        + sizeof(StaticArray<StaticString<cIDLen>, cMaxNumInstances>) * 5
+        + sizeof(StaticArray<MasqueradeParams, cMaxNumOwners>) + sizeof(InstanceNetworkInfo)
         + sizeof(InstanceNetworkConfig) + sizeof(InstanceHosts)
         + sizeof(StaticArray<InstanceNetworkStateInfo, cMaxNumInstances>);
     static constexpr auto cNumAllocations = 8 * cMaxNumConcurrentItems;
@@ -235,6 +236,7 @@ private:
         const String& instanceID, const String& hostIfName, const String& bridgeIfName) const;
     Error InitInstance(const String& instanceID, const String& networkID);
     Error ReconcileInstances();
+    Error RemoveFirewallOrphans();
     Error RemoveDNSOrphans();
     Error AdoptDNSServer(const String& networkID);
     Error PrepareBridgeParams(

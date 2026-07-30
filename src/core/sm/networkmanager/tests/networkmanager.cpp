@@ -42,6 +42,7 @@ protected:
         std::filesystem::create_directories(mWorkingDir.CStr());
 
         EXPECT_CALL(mFirewall, Start()).WillOnce(Return(aos::ErrorEnum::eNone));
+        EXPECT_CALL(mFirewall, RemoveOrphans(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mTrafficMonitor, Start()).WillOnce(Return(aos::ErrorEnum::eNone));
 
         // NetworkManager::Start reaps DNS orphans from a previous SM lifetime
@@ -249,6 +250,7 @@ protected:
         mNetManager.reset();
 
         EXPECT_CALL(mFirewall, Start()).WillOnce(Return(aos::ErrorEnum::eNone));
+        EXPECT_CALL(mFirewall, RemoveOrphans(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mTrafficMonitor, Start()).WillOnce(Return(aos::ErrorEnum::eNone));
 
         EXPECT_CALL(mStorage, GetNetworksInfo(_))
