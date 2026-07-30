@@ -109,7 +109,7 @@ Error NetworkManager::Start()
         return err;
     }
 
-    if (err = CleanupLeftoverInstances(); !err.IsNone()) {
+    if (err = ReconcileInstances(); !err.IsNone()) {
         return err;
     }
 
@@ -977,13 +977,93 @@ Error NetworkManager::UpdateInstanceNetworkCache(
     return ErrorEnum::eNone;
 }
 
-Error NetworkManager::CleanupLeftoverInstances()
+RetWithError<bool> NetworkManager::IsInstanceInterfaceAlive(
+    const String& instanceID, const String& hostIfName, const String& bridgeIfName) const
 {
-    LOG_DBG() << "Cleanup leftover instances";
+    if (bridgeIfName.IsEmpty()) {
+        return {false, ErrorEnum::eNone};
+    }
+
+    LinkInfo link;
+
+    if (auto err = mNetIf->GetLink(hostIfName, link); !err.IsNone()) {
+        if (err.Is(ErrorEnum::eNotFound)) {
+            return {false, ErrorEnum::eNone};
+        }
+
+        return {false, AOS_ERROR_WRAP(err)};
+    }
+
+    if (link.mKind != LinkKindEnum::eVeth || link.mMaster != bridgeIfName) {
+        return {false, ErrorEnum::eNone};
+    }
+
+    bool  nsExists = false;
+    Error err;
+
+    if (Tie(nsExists, err) = mNetns->IsNetworkNamespaceExist(instanceID); !err.IsNone()) {
+        return {false, AOS_ERROR_WRAP(err)};
+    }
+
+    return {nsExists, ErrorEnum::eNone};
+}
+
+Error NetworkManager::InitInstance(const String& instanceID, const String& networkID)
+{
+    LOG_DBG() << "Adopt running instance" << Log::Field("instanceID", instanceID) << Log::Field("networkID", networkID);
+
+    if (auto errCache = AddInstanceToCache(instanceID, networkID); !errCache.IsNone()) {
+        return errCache;
+    }
+
+    Error err;
+
+    auto cleanupCache = DeferRelease(&instanceID, [this, &networkID, &err](const String* id) {
+        if (!err.IsNone()) {
+            if (auto errRemove = RemoveInstanceFromCache(*id, networkID); !errRemove.IsNone()) {
+                LOG_ERR() << "Failed to remove instance from cache" << Log::Field("instanceID", *id)
+                          << Log::Field("networkID", networkID) << Log::Field(errRemove);
+            }
+        }
+    });
+
+    auto config = MakeUnique<InstanceNetworkConfig>(&mAllocator);
+
+    {
+        LockGuard lock {mMutex};
+
+        auto it = mInstanceNetworkInfos.Find(instanceID);
+        if (it == mInstanceNetworkInfos.end()) {
+            err = AOS_ERROR_WRAP(Error(ErrorEnum::eNotFound, "instance network info not found"));
+
+            return err;
+        }
+
+        *config = it->mSecond.mNetworkConfig;
+    }
+
+    auto hosts = MakeUnique<InstanceHosts>(&mAllocator);
+
+    if (err = PrepareHosts(instanceID, networkID, *config, *hosts); !err.IsNone()) {
+        return err;
+    }
+
+    if (err = UpdateInstanceNetworkCache(instanceID, networkID, *hosts); !err.IsNone()) {
+        return err;
+    }
+
+    return ErrorEnum::eNone;
+}
+
+Error NetworkManager::ReconcileInstances()
+{
+    LOG_DBG() << "Reconcile instances";
 
     struct Entry {
-        StaticString<cIDLen> mInstanceID;
-        StaticString<cIDLen> mNetworkID;
+        StaticString<cIDLen>        mInstanceID;
+        StaticString<cIDLen>        mNetworkID;
+        StaticString<cInterfaceLen> mHostIfName;
+        StaticString<cInterfaceLen> mBridgeIfName;
     };
 
     auto entries = MakeUnique<StaticArray<Entry, cMaxNumInstances>>(&mAllocator);
@@ -992,25 +1072,44 @@ Error NetworkManager::CleanupLeftoverInstances()
         LockGuard lock {mMutex};
 
         for (const auto& item : mInstanceNetworkInfos) {
-            if (auto err = entries->PushBack({item.mFirst, item.mSecond.mNetworkID}); !err.IsNone()) {
+            StaticString<cInterfaceLen> bridgeIfName;
+
+            if (auto it = mNetworkProviders.Find(item.mSecond.mNetworkID); it != mNetworkProviders.end()) {
+                bridgeIfName = it->mSecond.mBridgeIfName;
+            }
+
+            if (auto err
+                = entries->PushBack({item.mFirst, item.mSecond.mNetworkID, item.mSecond.mHostIfName, bridgeIfName});
+                !err.IsNone()) {
                 return AOS_ERROR_WRAP(err);
             }
         }
     }
 
-    // Adopt a DNS handle for each network with leftover instances, so the
-    // RemoveHost call inside DeleteInstanceNetworkConfig has a backend to
-    // talk to (CreateInstance is idempotent — it adopts a surviving dnsmasq
-    // for this networkID or respawns a fresh one).
     for (const auto& entry : *entries) {
-        if (auto err = AdoptDNSServer(entry.mNetworkID); !err.IsNone()) {
-            LOG_WRN() << "Failed to adopt DNS server for leftover cleanup" << Log::Field("networkID", entry.mNetworkID)
-                      << Log::Field(err);
+        if (entry.mHostIfName.IsEmpty()) {
+            continue;
         }
-    }
 
-    for (const auto& entry : *entries) {
-        if (auto err = DeleteInstanceNetworkConfig(entry.mInstanceID, entry.mNetworkID); !err.IsNone()) {
+        bool  alive = false;
+        Error err;
+
+        if (Tie(alive, err) = IsInstanceInterfaceAlive(entry.mInstanceID, entry.mHostIfName, entry.mBridgeIfName);
+            !err.IsNone()) {
+            LOG_WRN() << "Failed to check leftover instance interface" << Log::Field("instanceID", entry.mInstanceID)
+                      << Log::Field("hostIfName", entry.mHostIfName) << Log::Field(err);
+        }
+
+        if (alive) {
+            if (err = InitInstance(entry.mInstanceID, entry.mNetworkID); err.IsNone()) {
+                continue;
+            } else {
+                LOG_WRN() << "Failed to adopt leftover instance, falling back to cleanup"
+                          << Log::Field("instanceID", entry.mInstanceID) << Log::Field(err);
+            }
+        }
+
+        if (err = DeleteInstanceNetworkConfig(entry.mInstanceID, entry.mNetworkID); !err.IsNone()) {
             LOG_WRN() << "Failed to delete leftover instance network config"
                       << Log::Field("instanceID", entry.mInstanceID) << Log::Field("networkID", entry.mNetworkID)
                       << Log::Field(err);
