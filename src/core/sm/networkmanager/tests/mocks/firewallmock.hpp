@@ -17,6 +17,7 @@ class FirewallMock : public FirewallItf {
 public:
     MOCK_METHOD(Error, Start, (), (override));
     MOCK_METHOD(Error, Stop, (), (override));
+    MOCK_METHOD(Error, RemoveOrphans, (const Array<StaticString<cIDLen>>&, const Array<MasqueradeParams>&), (override));
     MOCK_METHOD(Error, AddInstance, (const String&, const InstanceFirewallParams&), (override));
     MOCK_METHOD(Error, RemoveInstance, (const String&), (override));
     MOCK_METHOD(Error, UpdateInstance, (const String&, const InstanceFirewallParams&), (override));
