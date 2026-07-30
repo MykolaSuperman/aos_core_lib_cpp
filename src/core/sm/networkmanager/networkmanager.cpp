@@ -1367,6 +1367,21 @@ Error NetworkManager::PrepareDNSServerParams(const NetworkInfo& network, DNSServ
     return ErrorEnum::eNone;
 }
 
+RetWithError<bool> NetworkManager::IsLinkExist(const String& ifName) const
+{
+    LinkInfo link;
+
+    if (auto err = mNetIf->GetLink(ifName, link); !err.IsNone()) {
+        if (err.Is(ErrorEnum::eNotFound)) {
+            return {false, ErrorEnum::eNone};
+        }
+
+        return {false, AOS_ERROR_WRAP(err)};
+    }
+
+    return {true, ErrorEnum::eNone};
+}
+
 Error NetworkManager::CreateNetwork(const NetworkInfo& network)
 {
     LOG_DBG() << "Create network" << Log::Field("networkID", network.mNetworkID)
@@ -1376,24 +1391,54 @@ Error NetworkManager::CreateNetwork(const NetworkInfo& network)
 
     Error err;
 
-    if (err = mNetIfFactory->CreateBridge(network.mBridgeIfName, network.mIP, network.mSubnet); !err.IsNone()) {
-        return AOS_ERROR_WRAP(err);
+    // A link may already be there when SM crashed without running its teardown.
+    // Recreating it is not a no-op: the kernel takes RTM_NEWLINK without
+    // NLM_F_EXCL as a modify request, so CreateVlan would push a freshly
+    // generated MAC onto the live vlan and break the traffic of the instances
+    // still running on it. Adopt what exists and create only what is missing.
+    bool bridgeExists = false;
+
+    if (Tie(bridgeExists, err) = IsLinkExist(network.mBridgeIfName); !err.IsNone()) {
+        return err;
     }
 
-    auto cleanupBridge = DeferRelease(&network, [this, &err](const NetworkInfo* network) {
-        if (!err.IsNone()) {
+    bool bridgeCreated = false;
+
+    if (!bridgeExists) {
+        if (err = mNetIfFactory->CreateBridge(network.mBridgeIfName, network.mIP, network.mSubnet); !err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
+        }
+
+        bridgeCreated = true;
+    }
+
+    auto cleanupBridge = DeferRelease(&network, [this, &err, bridgeCreated](const NetworkInfo* network) {
+        if (!err.IsNone() && bridgeCreated) {
             mNetIf->DeleteLink(network->mBridgeIfName);
         }
     });
 
-    // Create the vlan already enslaved to the bridge (master) in one operation,
-    // avoiding a separate SetMasterLink round-trip.
-    if (err = mNetIfFactory->CreateVlan(network.mVlanIfName, network.mVlanID, network.mBridgeIfName); !err.IsNone()) {
-        return AOS_ERROR_WRAP(err);
+    bool vlanExists = false;
+
+    if (Tie(vlanExists, err) = IsLinkExist(network.mVlanIfName); !err.IsNone()) {
+        return err;
     }
 
-    auto cleanupVlan = DeferRelease(&network, [this, &err](const NetworkInfo* network) {
-        if (!err.IsNone()) {
+    bool vlanCreated = false;
+
+    if (!vlanExists) {
+        // Create the vlan already enslaved to the bridge (master) in one operation,
+        // avoiding a separate SetMasterLink round-trip.
+        if (err = mNetIfFactory->CreateVlan(network.mVlanIfName, network.mVlanID, network.mBridgeIfName);
+            !err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
+        }
+
+        vlanCreated = true;
+    }
+
+    auto cleanupVlan = DeferRelease(&network, [this, &err, vlanCreated](const NetworkInfo* network) {
+        if (!err.IsNone() && vlanCreated) {
             mNetIf->DeleteLink(network->mVlanIfName);
         }
     });
