@@ -285,8 +285,9 @@ protected:
 
     void ExpectLeftoverInstanceCleaned()
     {
-        EXPECT_CALL(mDNSName, CreateServer(_, _)).Times(0);
-        EXPECT_CALL(mDNSServer, RemoveHost(_)).Times(0);
+        EXPECT_CALL(mDNSName, CreateServer(_, _))
+            .WillOnce(Return(aos::RetWithError<DNSServerItf*> {&mDNSServer, aos::ErrorEnum::eNone}));
+        EXPECT_CALL(mDNSServer, RemoveHost(aos::String("leftover-instance"))).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mBandwidth, Clear(_)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mFirewall, RemoveInstance(_)).WillOnce(Return(aos::ErrorEnum::eNone));
         EXPECT_CALL(mBridgeNetwork, Detach(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
