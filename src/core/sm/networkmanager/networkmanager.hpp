@@ -250,9 +250,10 @@ private:
     Error IsHostnameExist(const InstanceCache& instanceCache, const Array<StaticString<cHostNameLen>>& hosts) const;
     Error PushHostWithDomain(
         const String& host, const String& networkID, Array<StaticString<cHostNameLen>>& hosts) const;
-    Error CreateNetwork(const NetworkInfo& network);
-    Error DeleteInstanceNetworkConfig(const String& instanceID, const String& networkID);
-    Error GenerateIfName(String& ifName, const String& ifPrefix);
+    RetWithError<bool> IsLinkExist(const String& ifName) const;
+    Error              CreateNetwork(const NetworkInfo& network);
+    Error              DeleteInstanceNetworkConfig(const String& instanceID, const String& networkID);
+    Error              GenerateIfName(String& ifName, const String& ifPrefix);
 
     template <typename P>
     Error GenerateUniqueIfName(String& ifName, const String& ifPrefix, P&& isUnique)
