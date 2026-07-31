@@ -275,12 +275,14 @@ protected:
         const aos::sm::networkmanager::NetworkInfo& network)
     {
         aos::sm::networkmanager::InstanceNetworkInfo leftover;
-        leftover.mInstanceID              = "leftover-instance";
-        leftover.mNetworkID               = network.mNetworkID;
-        leftover.mNetworkConfig.mHostname = "leftover-host";
-        leftover.mAllocatedParams.mIP     = "192.168.1.5";
-        leftover.mAllocatedParams.mSubnet = network.mSubnet;
-        leftover.mHostIfName              = "veth-leftover";
+        leftover.mInstanceID                   = "leftover-instance";
+        leftover.mNetworkID                    = network.mNetworkID;
+        leftover.mNetworkConfig.mHostname      = "leftover-host";
+        leftover.mNetworkConfig.mDownloadLimit = 4096;
+        leftover.mNetworkConfig.mUploadLimit   = 2048;
+        leftover.mAllocatedParams.mIP          = "192.168.1.5";
+        leftover.mAllocatedParams.mSubnet      = network.mSubnet;
+        leftover.mHostIfName                   = "veth-leftover";
 
         return leftover;
     }
@@ -1434,6 +1436,11 @@ TEST_F(NetworkManagerTest, Start_KeepsLeftoverInstanceWithLiveInterface)
     EXPECT_CALL(mDNSName, RemoveOrphans(_)).WillOnce(Return(aos::ErrorEnum::eNone));
 
     ExpectLeftoverInstanceUntouched();
+
+    EXPECT_CALL(mTrafficMonitor,
+        StartInstanceMonitoring(leftover.mInstanceID, leftover.mAllocatedParams.mIP,
+            leftover.mNetworkConfig.mDownloadLimit, leftover.mNetworkConfig.mUploadLimit))
+        .WillOnce(Return(aos::ErrorEnum::eNone));
 
     ASSERT_EQ(mNetManager->Start(), aos::ErrorEnum::eNone);
 
