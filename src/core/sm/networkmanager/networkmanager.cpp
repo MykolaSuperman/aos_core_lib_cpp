@@ -1031,7 +1031,8 @@ Error NetworkManager::InitInstance(const String& instanceID, const String& netwo
         }
     });
 
-    auto config = MakeUnique<InstanceNetworkConfig>(&mAllocator);
+    auto                 config = MakeUnique<InstanceNetworkConfig>(&mAllocator);
+    StaticString<cIPLen> instanceIP;
 
     {
         LockGuard lock {mMutex};
@@ -1043,7 +1044,8 @@ Error NetworkManager::InitInstance(const String& instanceID, const String& netwo
             return err;
         }
 
-        *config = it->mSecond.mNetworkConfig;
+        *config    = it->mSecond.mNetworkConfig;
+        instanceIP = it->mSecond.mAllocatedParams.mIP;
     }
 
     auto hosts = MakeUnique<InstanceHosts>(&mAllocator);
@@ -1051,6 +1053,21 @@ Error NetworkManager::InitInstance(const String& instanceID, const String& netwo
     if (err = PrepareHosts(instanceID, networkID, *config, *hosts); !err.IsNone()) {
         return err;
     }
+
+    if (err
+        = mNetMonitor->StartInstanceMonitoring(instanceID, instanceIP, config->mDownloadLimit, config->mUploadLimit);
+        !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
+    }
+
+    auto cleanupMonitoring = DeferRelease(&instanceID, [this, &err](const String* id) {
+        if (!err.IsNone()) {
+            if (auto errStop = mNetMonitor->StopInstanceMonitoring(*id); !errStop.IsNone()) {
+                LOG_ERR() << "Failed to stop instance monitoring on rollback" << Log::Field("instanceID", *id)
+                          << Log::Field(errStop);
+            }
+        }
+    });
 
     if (err = UpdateInstanceNetworkCache(instanceID, networkID, *hosts); !err.IsNone()) {
         return err;
