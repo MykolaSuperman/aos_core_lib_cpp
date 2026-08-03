@@ -302,7 +302,9 @@ protected:
 
     void ExpectLeftoverInstanceUntouched()
     {
-        EXPECT_CALL(mDNSName, CreateServer(_, _)).Times(0);
+        // Adopting a running instance registers the network DNS server so later cleanup can reach it.
+        EXPECT_CALL(mDNSName, CreateServer(_, _))
+            .WillOnce(Return(aos::RetWithError<DNSServerItf*> {&mDNSServer, aos::ErrorEnum::eNone}));
         EXPECT_CALL(mDNSServer, RemoveHost(_)).Times(0);
         EXPECT_CALL(mBandwidth, Clear(_)).Times(0);
         EXPECT_CALL(mFirewall, RemoveInstance(_)).Times(0);
@@ -1672,6 +1674,44 @@ TEST_F(NetworkManagerTest, Start_KeepsLeftoverInstanceWithLiveInterface)
 
     EXPECT_TRUE(
         mNetManager->StartInstanceNetwork(leftover.mInstanceID, network.mNetworkID).Is(aos::ErrorEnum::eAlreadyExist));
+}
+
+TEST_F(NetworkManagerTest, Start_AdoptsDNSServerForRunningInstanceCleanedOnStop)
+{
+    const auto network  = CreateTestNetworkInfo();
+    const auto leftover = CreateLeftoverInstance(network);
+
+    aos::StaticArray<aos::sm::networkmanager::NetworkInfo, aos::cMaxNumOwners>            networks;
+    aos::StaticArray<aos::sm::networkmanager::InstanceNetworkInfo, aos::cMaxNumInstances> instances;
+    networks.PushBack(network);
+    instances.PushBack(leftover);
+
+    RestartWithStoredState(networks, instances);
+
+    ExpectLinkExists(leftover.mHostIfName, LinkKindEnum::eVeth, network.mBridgeIfName);
+    EXPECT_CALL(mNetns, IsNetworkNamespaceExist(leftover.mInstanceID))
+        .WillRepeatedly(Return(aos::RetWithError<bool> {true, aos::ErrorEnum::eNone}));
+
+    EXPECT_CALL(mDNSName, RemoveOrphans(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    // Adopting the running instance must register the network DNS server.
+    EXPECT_CALL(mDNSName, CreateServer(network.mNetworkID, _))
+        .WillOnce(Return(aos::RetWithError<DNSServerItf*> {&mDNSServer, aos::ErrorEnum::eNone}));
+    EXPECT_CALL(mTrafficMonitor,
+        StartInstanceMonitoring(leftover.mInstanceID, leftover.mAllocatedParams.mIP,
+            leftover.mNetworkConfig.mDownloadLimit, leftover.mNetworkConfig.mUploadLimit))
+        .WillOnce(Return(aos::ErrorEnum::eNone));
+
+    ASSERT_EQ(mNetManager->Start(), aos::ErrorEnum::eNone);
+
+    // Stopping the adopted instance must reach the DNS server and drop its host entry.
+    EXPECT_CALL(mTrafficMonitor, StopInstanceMonitoring(leftover.mInstanceID)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mDNSServer, RemoveHost(leftover.mInstanceID)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mFirewall, RemoveInstance(leftover.mInstanceID)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mNetns, DeleteNetworkNamespace(leftover.mInstanceID)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mStorage, UpdateInstanceNetworkInfo(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    EXPECT_EQ(mNetManager->StopInstanceNetwork(leftover.mInstanceID, network.mNetworkID), aos::ErrorEnum::eNone);
 }
 
 TEST_F(NetworkManagerTest, Start_CleansLeftoverInstanceWhenNamespaceMissing)
