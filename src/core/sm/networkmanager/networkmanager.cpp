@@ -1330,6 +1330,11 @@ Error NetworkManager::ReconcileInstances()
 
         if (alive) {
             if (err = InitInstance(entry.mInstanceID, entry.mNetworkID); err.IsNone()) {
+                if (auto dnsErr = AdoptDNSServer(entry.mNetworkID); !dnsErr.IsNone()) {
+                    LOG_WRN() << "Failed to adopt DNS server for running instance"
+                              << Log::Field("networkID", entry.mNetworkID) << Log::Field(dnsErr);
+                }
+
                 continue;
             } else {
                 LOG_WRN() << "Failed to adopt leftover instance, falling back to cleanup"
