@@ -87,23 +87,27 @@ RetWithError<bool> OverrideEnvVarsProcessor::OverrideEnvVars(const OverrideEnvVa
     return {changed, err};
 }
 
-Error OverrideEnvVarsProcessor::AddStatuses(const Array<InstanceStatus>& statuses)
+Error OverrideEnvVarsProcessor::AddStatuses(const String& nodeID, const Array<InstanceStatus>& statuses)
 {
     LockGuard lock {mMutex};
+
+    mNodeEnvVarStatuses.RemoveIf(
+        [&nodeID](const EnvVarsInstanceStatusWithNode& item) { return item.mNodeID == nodeID; });
 
     for (const auto& status : statuses) {
         if (status.mEnvVarsStatuses.IsEmpty()) {
             continue;
         }
 
-        if (auto err = mNewEnvVarStatuses.mStatuses.EmplaceBack(); !err.IsNone()) {
+        if (auto err = mNodeEnvVarStatuses.EmplaceBack(); !err.IsNone()) {
             return AOS_ERROR_WRAP(err);
         }
 
-        auto& item = mNewEnvVarStatuses.mStatuses.Back();
+        auto& item = mNodeEnvVarStatuses.Back();
 
-        static_cast<InstanceIdent&>(item) = static_cast<const InstanceIdent&>(status);
-        item.mStatuses                    = status.mEnvVarsStatuses;
+        item.mNodeID                              = nodeID;
+        static_cast<InstanceIdent&>(item.mStatus) = static_cast<const InstanceIdent&>(status);
+        item.mStatus.mStatuses                    = status.mEnvVarsStatuses;
     }
 
     return ErrorEnum::eNone;
@@ -113,14 +117,27 @@ void OverrideEnvVarsProcessor::SendStatuses()
 {
     LockGuard lock {mMutex};
 
-    if (mNewEnvVarStatuses != mEnvVarStatuses) {
-        if (auto err = mEnvVarStatusSender->SendOverrideEnvsStatuses(mNewEnvVarStatuses); !err.IsNone()) {
-            LOG_ERR() << "Can't send override env vars statuses" << Log::Field(AOS_ERROR_WRAP(err));
+    mNewEnvVarStatuses.mStatuses.Clear();
+
+    for (const auto& item : mNodeEnvVarStatuses) {
+        if (auto err = mNewEnvVarStatuses.mStatuses.PushBack(item.mStatus); !err.IsNone()) {
+            LOG_ERR() << "Can't prepare override env vars statuses" << Log::Field(AOS_ERROR_WRAP(err));
+
+            return;
         }
     }
 
-    mEnvVarStatuses = mNewEnvVarStatuses;
-    mNewEnvVarStatuses.mStatuses.Clear();
+    mNewEnvVarStatuses.mStatuses.Sort([](const EnvVarsInstanceStatus& a, const EnvVarsInstanceStatus& b) {
+        return static_cast<const InstanceIdent&>(a) < static_cast<const InstanceIdent&>(b);
+    });
+
+    if (mNewEnvVarStatuses != mCurrentEnvVarStatuses) {
+        if (auto err = mEnvVarStatusSender->SendOverrideEnvsStatuses(mNewEnvVarStatuses); !err.IsNone()) {
+            LOG_ERR() << "Can't send override env vars statuses" << Log::Field(AOS_ERROR_WRAP(err));
+        } else {
+            mCurrentEnvVarStatuses = mNewEnvVarStatuses;
+        }
+    }
 }
 
 /***********************************************************************************************************************
