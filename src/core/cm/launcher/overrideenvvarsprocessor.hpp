@@ -69,6 +69,14 @@ private:
 };
 
 /**
+ * Environment variables instance status with node ID.
+ */
+struct EnvVarsInstanceStatusWithNode {
+    StaticString<cIDLen>  mNodeID;
+    EnvVarsInstanceStatus mStatus;
+};
+
+/**
  * Processes override environment variables requests.
  */
 class OverrideEnvVarsProcessor {
@@ -118,15 +126,16 @@ public:
     OverrideEnvVarsAccessor GetOverrideEnvVars() { return OverrideEnvVarsAccessor(mMutex, mOverrideEnvVars); }
 
     /**
-     * Adds instance env var statuses to the new instance pool.
+     * Stores instance env var statuses for the given node, replacing any previously stored statuses for that node.
      *
+     * @param nodeID node ID.
      * @param statuses instance statuses.
      * @return Error.
      */
-    Error AddStatuses(const Array<InstanceStatus>& statuses);
+    Error AddStatuses(const String& nodeID, const Array<InstanceStatus>& statuses);
 
     /**
-     * Sends the accumulated env var statuses to the listener if they changed since the last send.
+     * Sends a full snapshot of stored env var statuses if they changed since the last send.
      */
     void SendStatuses();
 
@@ -145,9 +154,10 @@ private:
     Mutex mMutex;
     Timer mTimer;
 
-    OverrideEnvVarsRequest  mOverrideEnvVars;
-    OverrideEnvVarsStatuses mEnvVarStatuses;
-    OverrideEnvVarsStatuses mNewEnvVarStatuses;
+    OverrideEnvVarsRequest                                       mOverrideEnvVars;
+    StaticArray<EnvVarsInstanceStatusWithNode, cMaxNumInstances> mNodeEnvVarStatuses;
+    OverrideEnvVarsStatuses                                      mCurrentEnvVarStatuses;
+    OverrideEnvVarsStatuses                                      mNewEnvVarStatuses;
 };
 
 /** @}*/
