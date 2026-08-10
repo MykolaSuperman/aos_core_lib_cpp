@@ -176,9 +176,17 @@ private:
     static constexpr auto cRetryTimeout       = Time::cSeconds * 2;
     static constexpr auto cDigestAlgorithmLen = 16;
 
+    /**
+     * Downloading space of a single blob. mSpace reserves only bytes to be written: mTotalSize - mExistingSize.
+     */
+    struct DownloadSpace {
+        UniquePtr<spaceallocator::SpaceItf> mSpace;
+        size_t                              mExistingSize {};
+        size_t                              mTotalSize {};
+    };
+
     Error RemoveOutdatedItems();
     Error WaitForStop();
-    Error AllocateSpaceForPartialDownloads();
     Error RemovePendingItems(const Array<ItemInfo>& storedItems, Array<UpdateItemStatus>& statuses);
     Error CleanupDownloadingItems(const Array<UpdateItemInfo>& currentItems, const Array<ItemInfo>& storedItems);
     Error VerifyStoredItems(const Array<UpdateItemInfo>& itemsInfo, Array<ItemInfo>& storedItems,
@@ -208,13 +216,13 @@ private:
         const Array<crypto::CertificateInfo>&      certificates,
         const Array<crypto::CertificateChainInfo>& certificateChains, UniquePtr<spaceallocator::SpaceItf>& space);
     Error DownloadBlob(const String& digest, const String& downloadPath, const String& installPath, BlobInfo& blobInfo,
-        UniquePtr<spaceallocator::SpaceItf>& downloadingSpace);
+        DownloadSpace& downloadSpace);
     Error GetBlobInfo(const String& digest, BlobInfo& blobInfo);
     Error CheckExistingBlob(const String& installPath);
-    Error PrepareDownloadSpace(const String& downloadPath, const BlobInfo& blobInfo, size_t& partialDownloadSize,
-        UniquePtr<spaceallocator::SpaceItf>& downloadingSpace);
-    Error PerformDownload(const BlobInfo& blobInfo, const String& downloadPath, size_t partialDownloadSize,
-        UniquePtr<spaceallocator::SpaceItf>& downloadingSpace);
+    Error PrepareDownloadSpace(const String& downloadPath, const BlobInfo& blobInfo, DownloadSpace& downloadSpace);
+    Error PerformDownload(const BlobInfo& blobInfo, const String& downloadPath, DownloadSpace& downloadSpace);
+    void  DiscardDownload(const String& downloadPath, DownloadSpace& downloadSpace);
+    void  AcceptDownloadSpace(DownloadSpace& downloadSpace, size_t bytesOnDisk);
     Error DecryptAndValidateBlob(const String& downloadPath, const String& installPath, const BlobInfo& blobInfo,
         const Array<crypto::CertificateInfo>&      certificates,
         const Array<crypto::CertificateChainInfo>& certificateChains,

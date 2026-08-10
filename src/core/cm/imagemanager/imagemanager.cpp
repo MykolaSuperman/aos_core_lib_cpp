@@ -55,10 +55,6 @@ Error ImageManager::Init(AllocatorItf& allocator, const Config& config, StorageI
         return AOS_ERROR_WRAP(err);
     }
 
-    if (auto err = AllocateSpaceForPartialDownloads(); !err.IsNone()) {
-        return AOS_ERROR_WRAP(err);
-    }
-
     RegisterOutdatedItems(*items);
 
     auto [cleanupSize, cleanupErr] = CleanupOrphanedBlobs();
@@ -571,54 +567,6 @@ Error ImageManager::WaitForStop()
     return ErrorEnum::eNone;
 }
 
-Error ImageManager::AllocateSpaceForPartialDownloads()
-{
-    LOG_DBG() << "Allocate space for partial downloads" << Log::Field("path", mBlobsDownloadPath);
-
-    auto algorithmDirIterator = fs::DirIterator(mBlobsDownloadPath);
-
-    while (algorithmDirIterator.Next()) {
-        auto algorithm    = algorithmDirIterator->mPath;
-        auto algorithmDir = fs::JoinPath(mBlobsDownloadPath, algorithm);
-
-        auto fileIterator = fs::DirIterator(algorithmDir);
-
-        while (fileIterator.Next()) {
-            auto fileName = fileIterator->mPath;
-            auto filePath = fs::JoinPath(algorithmDir, fileName);
-
-            auto [fileSize, sizeErr] = fs::CalculateSize(*mAllocator, filePath);
-            if (!sizeErr.IsNone()) {
-                LOG_WRN() << "Failed to get size for partial download" << Log::Field("path", filePath)
-                          << Log::Field(sizeErr);
-
-                continue;
-            }
-
-            if (fileSize == 0) {
-                continue;
-            }
-
-            UniquePtr<spaceallocator::SpaceItf> space;
-            Error                               err;
-
-            if (Tie(space, err) = mDownloadingSpaceAllocator->AllocateSpace(fileSize); !err.IsNone()) {
-                LOG_ERR() << "Failed to allocate space for partial download" << Log::Field("path", filePath)
-                          << Log::Field("size", fileSize) << Log::Field(err);
-
-                return AOS_ERROR_WRAP(err);
-            }
-
-            space->Accept();
-
-            LOG_DBG() << "Allocated space for partial download" << Log::Field("path", filePath)
-                      << Log::Field("size", fileSize);
-        }
-    }
-
-    return ErrorEnum::eNone;
-}
-
 Error ImageManager::RemovePendingItems(const Array<ItemInfo>& storedItems, Array<UpdateItemStatus>& statuses)
 {
     LOG_DBG() << "Remove pending items";
@@ -1086,10 +1034,13 @@ Error ImageManager::EnsureBlob(const String& digest, const String& downloadPath,
         return AOS_ERROR_WRAP(ErrorEnum::eNoMemory);
     }
 
-    UniquePtr<spaceallocator::SpaceItf> downloadingSpace;
+    DownloadSpace downloadSpace;
+
+    auto discardDownload
+        = DeferRelease(&downloadSpace, [&](DownloadSpace* spacePtr) { DiscardDownload(downloadPath, *spacePtr); });
 
     do {
-        if (auto err = DownloadBlob(digest, downloadPath, installPath, *blobInfo, downloadingSpace); !err.IsNone()) {
+        if (auto err = DownloadBlob(digest, downloadPath, installPath, *blobInfo, downloadSpace); !err.IsNone()) {
             if (err == ErrorEnum::eAlreadyExist) {
                 return ErrorEnum::eNone;
             }
@@ -1101,8 +1052,6 @@ Error ImageManager::EnsureBlob(const String& digest, const String& downloadPath,
 
         if (auto err = mFileInfoProvider->GetFileInfo(downloadPath, downloadFileInfo, crypto::HashEnum::eSHA3_256);
             !err.IsNone()) {
-            downloadingSpace->Release();
-
             return AOS_ERROR_WRAP(err);
         }
 
@@ -1112,20 +1061,12 @@ Error ImageManager::EnsureBlob(const String& digest, const String& downloadPath,
 
         LOG_WRN() << "Download checksum mismatch, retrying download" << Log::Field("digest", digest);
 
-        downloadingSpace->Release();
-
-        if (auto removeErr = fs::RemoveAll(downloadPath); !removeErr.IsNone()) {
-            LOG_ERR() << "Failed to remove download path" << Log::Field("path", downloadPath) << Log::Field(removeErr);
-        }
+        DiscardDownload(downloadPath, downloadSpace);
     } while (true);
 
     auto err = DecryptAndValidateBlob(downloadPath, installPath, *blobInfo, certificates, certificateChains, space);
 
-    downloadingSpace->Release();
-
-    if (auto removeErr = fs::RemoveAll(downloadPath); !removeErr.IsNone()) {
-        LOG_ERR() << "Failed to remove download path" << Log::Field("path", downloadPath) << Log::Field(removeErr);
-    }
+    DiscardDownload(downloadPath, downloadSpace);
 
     return AOS_ERROR_WRAP(err);
 }
@@ -1217,39 +1158,90 @@ Error ImageManager::CheckExistingBlob(const String& installPath)
     return ErrorEnum::eNone;
 }
 
-Error ImageManager::PrepareDownloadSpace(const String& downloadPath, const BlobInfo& blobInfo,
-    size_t& partialDownloadSize, UniquePtr<spaceallocator::SpaceItf>& downloadingSpace)
+Error ImageManager::PrepareDownloadSpace(
+    const String& downloadPath, const BlobInfo& blobInfo, DownloadSpace& downloadSpace)
 {
+    downloadSpace.mExistingSize = 0;
+    downloadSpace.mTotalSize    = blobInfo.mSize;
+
     auto [downloadExists, checkDownloadErr] = fs::FileExist(downloadPath);
     if (!checkDownloadErr.IsNone()) {
         return AOS_ERROR_WRAP(checkDownloadErr);
     }
 
-    partialDownloadSize = 0;
-
     if (downloadExists) {
-        auto [dirSize, getSizeErr] = fs::CalculateSize(*mAllocator, downloadPath);
+        auto [partialSize, getSizeErr] = fs::CalculateSize(*mAllocator, downloadPath);
         if (!getSizeErr.IsNone()) {
             return AOS_ERROR_WRAP(getSizeErr);
         }
 
-        partialDownloadSize = dirSize;
-    }
+        if (partialSize > blobInfo.mSize) {
+            LOG_WRN() << "Partial download exceeds blob size, removing" << Log::Field("path", downloadPath)
+                      << Log::Field("size", partialSize) << Log::Field("blobSize", blobInfo.mSize);
 
-    mDownloadingSpaceAllocator->FreeSpace(partialDownloadSize);
+            if (auto err = fs::RemoveAll(downloadPath); !err.IsNone()) {
+                return AOS_ERROR_WRAP(err);
+            }
+        } else {
+            downloadSpace.mExistingSize = partialSize;
+        }
+    }
 
     Error err;
 
-    Tie(downloadingSpace, err) = mDownloadingSpaceAllocator->AllocateSpace(blobInfo.mSize);
+    Tie(downloadSpace.mSpace, err)
+        = mDownloadingSpaceAllocator->AllocateSpace(blobInfo.mSize - downloadSpace.mExistingSize);
     if (!err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
 
+    LOG_DBG() << "Prepared download space" << Log::Field("path", downloadPath)
+              << Log::Field("existingSize", downloadSpace.mExistingSize) << Log::Field("blobSize", blobInfo.mSize);
+
     return ErrorEnum::eNone;
 }
 
-Error ImageManager::PerformDownload(const BlobInfo& blobInfo, const String& downloadPath, size_t partialDownloadSize,
-    UniquePtr<spaceallocator::SpaceItf>& downloadingSpace)
+void ImageManager::DiscardDownload(const String& downloadPath, DownloadSpace& downloadSpace)
+{
+    if (!downloadSpace.mSpace) {
+        return;
+    }
+
+    if (auto err = fs::RemoveAll(downloadPath); !err.IsNone()) {
+        LOG_ERR() << "Failed to remove download path" << Log::Field("path", downloadPath) << Log::Field(err);
+    }
+
+    if (downloadSpace.mExistingSize != 0) {
+        mDownloadingSpaceAllocator->FreeSpace(downloadSpace.mExistingSize);
+    }
+
+    if (auto err = downloadSpace.mSpace->Release(); !err.IsNone()) {
+        LOG_ERR() << "Failed to release downloading space" << Log::Field(err);
+    }
+
+    downloadSpace.mSpace.Reset();
+    downloadSpace.mExistingSize = 0;
+}
+
+void ImageManager::AcceptDownloadSpace(DownloadSpace& downloadSpace, size_t bytesOnDisk)
+{
+    if (!downloadSpace.mSpace) {
+        return;
+    }
+
+    if (bytesOnDisk < downloadSpace.mTotalSize) {
+        mDownloadingSpaceAllocator->FreeSpace(downloadSpace.mTotalSize - bytesOnDisk);
+    }
+
+    if (auto err = downloadSpace.mSpace->Accept(); !err.IsNone()) {
+        LOG_ERR() << "Failed to accept downloading space" << Log::Field(err);
+    }
+
+    downloadSpace.mSpace.Reset();
+    downloadSpace.mExistingSize = 0;
+}
+
+Error ImageManager::PerformDownload(const BlobInfo& blobInfo, const String& downloadPath, DownloadSpace& downloadSpace)
 {
     {
         LockGuard lock {mMutex};
@@ -1263,16 +1255,6 @@ Error ImageManager::PerformDownload(const BlobInfo& blobInfo, const String& down
         mCurrentDownloadDigest.Clear();
     });
 
-    StaticString<cFilePathLen> downloadDir;
-
-    if (auto err = fs::ParentPath(downloadPath, downloadDir); !err.IsNone()) {
-        return AOS_ERROR_WRAP(err);
-    }
-
-    if (auto err = fs::MakeDirAll(downloadDir); !err.IsNone()) {
-        return AOS_ERROR_WRAP(err);
-    }
-
     while (true) {
         auto err = mDownloader->Download(blobInfo.mDigest, blobInfo.mURLs[0], downloadPath);
         if (!err.IsNone()) {
@@ -1280,27 +1262,15 @@ Error ImageManager::PerformDownload(const BlobInfo& blobInfo, const String& down
                       << Log::Field("path", downloadPath) << Log::Field(AOS_ERROR_WRAP(err));
 
             if (err = WaitForStop(); !err.IsNone()) {
-                auto [newPartialSize, retrySizeErr] = fs::CalculateSize(*mAllocator, downloadPath);
-                if (!retrySizeErr.IsNone()) {
+                auto [bytesOnDisk, sizeErr] = fs::CalculateSize(*mAllocator, downloadPath);
+                if (!sizeErr.IsNone()) {
                     LOG_WRN() << "Failed to get partial download size" << Log::Field("path", downloadPath)
-                              << Log::Field(retrySizeErr);
-
-                    downloadingSpace->Release();
+                              << Log::Field(sizeErr);
 
                     return err;
                 }
 
-                downloadingSpace->Release();
-
-                Error allocationErr;
-
-                Tie(downloadingSpace, allocationErr)
-                    = mDownloadingSpaceAllocator->AllocateSpace(newPartialSize - partialDownloadSize);
-                if (!allocationErr.IsNone()) {
-                    return AOS_ERROR_WRAP(allocationErr);
-                }
-
-                downloadingSpace->Accept();
+                AcceptDownloadSpace(downloadSpace, bytesOnDisk);
 
                 return err;
             }
@@ -1320,7 +1290,7 @@ Error ImageManager::PerformDownload(const BlobInfo& blobInfo, const String& down
 }
 
 Error ImageManager::DownloadBlob(const String& digest, const String& downloadPath, const String& installPath,
-    BlobInfo& blobInfo, UniquePtr<spaceallocator::SpaceItf>& downloadingSpace)
+    BlobInfo& blobInfo, DownloadSpace& downloadSpace)
 {
     LOG_DBG() << "Download blob" << Log::Field("digest", digest);
 
@@ -1340,13 +1310,21 @@ Error ImageManager::DownloadBlob(const String& digest, const String& downloadPat
         return AOS_ERROR_WRAP(err);
     }
 
-    size_t partialDownloadSize = 0;
+    StaticString<cFilePathLen> downloadDir;
 
-    if (auto err = PrepareDownloadSpace(downloadPath, blobInfo, partialDownloadSize, downloadingSpace); !err.IsNone()) {
+    if (auto err = fs::ParentPath(downloadPath, downloadDir); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
 
-    if (auto err = PerformDownload(blobInfo, downloadPath, partialDownloadSize, downloadingSpace); !err.IsNone()) {
+    if (auto err = fs::MakeDirAll(downloadDir); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
+    }
+
+    if (auto err = PrepareDownloadSpace(downloadPath, blobInfo, downloadSpace); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
+    }
+
+    if (auto err = PerformDownload(blobInfo, downloadPath, downloadSpace); !err.IsNone()) {
         return AOS_ERROR_WRAP(err);
     }
 
