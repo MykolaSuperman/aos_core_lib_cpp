@@ -75,7 +75,7 @@
  * Alert message len.
  */
 #ifndef AOS_CONFIG_TYPES_ALERT_MESSAGE_LEN
-#define AOS_CONFIG_TYPES_ALERT_MESSAGE_LEN 256
+#define AOS_CONFIG_TYPES_ALERT_MESSAGE_LEN 512
 #endif
 
 /**
