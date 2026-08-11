@@ -172,11 +172,13 @@ private:
     static constexpr auto cBlobsDirName = "blobs";
 
     static constexpr auto cMaxNumListeners    = 1;
-    static constexpr auto cMaxNumItemVersions = 2;
     static constexpr auto cRetryTimeout       = Time::cSeconds * 2;
     static constexpr auto cDigestAlgorithmLen = 16;
+    static constexpr auto cMaxNumItemVersions = 2;
+    static constexpr auto cMaxNumStoredItems  = cMaxNumUpdateItems * cMaxNumItemVersions;
 
     Error RemoveOutdatedItems();
+    Error RemoveOldItemVersions(const String& itemID, Array<ItemInfo>& storedItems);
     Error WaitForStop();
     Error AllocateSpaceForPartialDownloads();
     Error RemovePendingItems(const Array<ItemInfo>& storedItems, Array<UpdateItemStatus>& statuses);

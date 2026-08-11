@@ -962,6 +962,151 @@ TEST_F(ImageManagerTest, DownloadUpdateItems_RemovesOldFailedVersion)
     EXPECT_EQ(statuses[0].mState, ItemStateEnum::ePending);
 }
 
+TEST_F(ImageManagerTest, DownloadUpdateItems_RemovesExcessRemovedVersion)
+{
+    StaticArray<UpdateItemInfo, 5>               itemsInfo;
+    StaticArray<crypto::CertificateInfo, 1>      certificates;
+    StaticArray<crypto::CertificateChainInfo, 1> certificateChains;
+    StaticArray<UpdateItemStatus, 5>             statuses;
+
+    UpdateItemInfo item;
+    item.mItemID      = "service1";
+    item.mVersion     = "2.0.0";
+    item.mIndexDigest = "sha256:abc123";
+    itemsInfo.PushBack(item);
+
+    EXPECT_CALL(mStorageMock, GetAllItemsInfos(_)).WillRepeatedly(Invoke([](Array<ItemInfo>& items) {
+        ItemInfo removedItem;
+        removedItem.mItemID      = "service1";
+        removedItem.mVersion     = "1.0.0";
+        removedItem.mIndexDigest = "sha256:old100";
+        removedItem.mState       = ItemStateEnum::eRemoved;
+        removedItem.mTimestamp   = Time::Now().Add(-(Time::cSeconds * 5));
+        items.PushBack(removedItem);
+
+        ItemInfo installedItem;
+        installedItem.mItemID      = "service1";
+        installedItem.mVersion     = "1.1.0";
+        installedItem.mIndexDigest = "sha256:old110";
+        installedItem.mState       = ItemStateEnum::eInstalled;
+        installedItem.mTimestamp   = Time::Now();
+        items.PushBack(installedItem);
+
+        return ErrorEnum::eNone;
+    }));
+
+    size_t numRemoved = 0;
+
+    EXPECT_CALL(mStorageMock, RemoveItem(_, _))
+        .WillRepeatedly(Invoke([&numRemoved](const String& itemID, const String& version) {
+            EXPECT_EQ(itemID, "service1");
+            EXPECT_EQ(version, "1.0.0");
+
+            numRemoved++;
+
+            return ErrorEnum::eNone;
+        }));
+
+    EXPECT_CALL(mInstallSpaceAllocatorMock, RestoreOutdatedItem(_, _)).WillRepeatedly(Return(ErrorEnum::eNone));
+    EXPECT_CALL(mInstallSpaceAllocatorMock, FreeSpace(_)).Times(AtLeast(1));
+
+    EXPECT_CALL(mStorageMock, AddItem(_)).WillOnce(Invoke([](const ItemInfo& item) {
+        EXPECT_EQ(item.mItemID, "service1");
+        EXPECT_EQ(item.mVersion, "2.0.0");
+        EXPECT_EQ(item.mState, ItemStateEnum::eDownloading);
+
+        return ErrorEnum::eNone;
+    }));
+
+    EXPECT_CALL(mBlobInfoProviderMock, GetBlobsInfos(_, _))
+        .WillRepeatedly(Invoke([](const auto&, Array<BlobInfo>& blobsInfo) {
+            BlobInfo info;
+            info.mDigest = "sha256:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+            info.mSize   = 1024;
+            info.mURLs.PushBack("http://test.com/blob");
+            info.mDecryptInfo.EmplaceValue();
+            info.mSignInfo.EmplaceValue();
+
+            for (size_t i = 0; i < crypto::cSHA256Size; i++) {
+                info.mSHA256.PushBack(static_cast<uint8_t>(i));
+            }
+
+            blobsInfo.PushBack(info);
+
+            return ErrorEnum::eNone;
+        }));
+
+    EXPECT_CALL(mDownloadingSpaceAllocatorMock, FreeSpace(_)).Times(AtLeast(0));
+    EXPECT_CALL(mDownloadingSpaceAllocatorMock, AllocateSpace(_))
+        .WillRepeatedly(Invoke([this](size_t) -> RetWithError<UniquePtr<spaceallocator::SpaceItf>> {
+            auto space = MakeUnique<spaceallocator::SpaceMock>(&mAllocator);
+            EXPECT_TRUE(space);
+
+            EXPECT_CALL(*space, Accept()).Times(AtLeast(0));
+            EXPECT_CALL(*space, Release()).Times(AtLeast(0));
+
+            return {std::move(space), ErrorEnum::eNone};
+        }));
+
+    EXPECT_CALL(mInstallSpaceAllocatorMock, AllocateSpace(_))
+        .WillRepeatedly(Invoke([this](size_t) -> RetWithError<UniquePtr<spaceallocator::SpaceItf>> {
+            auto space = MakeUnique<spaceallocator::SpaceMock>(&mAllocator);
+            EXPECT_TRUE(space);
+
+            EXPECT_CALL(*space, Accept()).Times(AtLeast(0));
+            EXPECT_CALL(*space, Release()).Times(AtLeast(0));
+
+            return {std::move(space), ErrorEnum::eNone};
+        }));
+
+    EXPECT_CALL(mDownloaderMock, Download(_, _, _)).WillRepeatedly(Return(ErrorEnum::eNone));
+
+    EXPECT_CALL(mOCISpecMock, LoadImageIndex(_, _)).WillRepeatedly(Invoke([](const String&, oci::ImageIndex& index) {
+        oci::IndexContentDescriptor manifest;
+        manifest.mDigest = "sha256:fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+        index.mManifests.PushBack(manifest);
+
+        return ErrorEnum::eNone;
+    }));
+
+    EXPECT_CALL(mOCISpecMock, LoadImageManifest(_, _))
+        .WillRepeatedly(Invoke([](const String&, oci::ImageManifest& manifest) {
+            manifest.mConfig.mDigest = "sha256:config1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+
+            oci::ContentDescriptor layer;
+            layer.mDigest = "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+            manifest.mLayers.PushBack(layer);
+
+            return ErrorEnum::eNone;
+        }));
+
+    EXPECT_CALL(mCryptoHelperMock, Decrypt(_, _, _)).WillRepeatedly(Return(ErrorEnum::eNone));
+    EXPECT_CALL(mCryptoHelperMock, ValidateSigns(_, _, _, _)).WillRepeatedly(Return(ErrorEnum::eNone));
+
+    EXPECT_CALL(mFileInfoProviderMock, GetFileInfo(_, _, _))
+        .WillRepeatedly(Invoke([](const String&, fs::FileInfo& info, crypto::Hash) {
+            for (size_t i = 0; i < crypto::cSHA256Size; i++) {
+                info.mCheckSum.PushBack(static_cast<uint8_t>(i));
+            }
+
+            info.mSize = 1024;
+
+            return ErrorEnum::eNone;
+        }));
+
+    EXPECT_CALL(mStorageMock, UpdateItemState(_, _, ItemState(ItemStateEnum::ePending), _))
+        .WillOnce(Return(ErrorEnum::eNone));
+
+    auto err = mImageManager.DownloadUpdateItems(itemsInfo, certificates, certificateChains, statuses);
+
+    EXPECT_TRUE(err.IsNone());
+    EXPECT_GE(numRemoved, 1);
+    ASSERT_EQ(statuses.Size(), 1);
+    EXPECT_EQ(statuses[0].mItemID, "service1");
+    EXPECT_EQ(statuses[0].mVersion, "2.0.0");
+    EXPECT_EQ(statuses[0].mState, ItemStateEnum::ePending);
+}
+
 TEST_F(ImageManagerTest, InstallUpdateItems_Success)
 {
     StaticArray<UpdateItemInfo, 5>   itemsInfo;
