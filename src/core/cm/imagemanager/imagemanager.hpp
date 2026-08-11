@@ -172,9 +172,10 @@ private:
     static constexpr auto cBlobsDirName = "blobs";
 
     static constexpr auto cMaxNumListeners    = 1;
-    static constexpr auto cMaxNumItemVersions = 2;
     static constexpr auto cRetryTimeout       = Time::cSeconds * 2;
     static constexpr auto cDigestAlgorithmLen = 16;
+    static constexpr auto cMaxNumItemVersions = 2;
+    static constexpr auto cMaxNumStoredItems  = cMaxNumUpdateItems * cMaxNumItemVersions;
 
     /**
      * Downloading space of a single blob. mSpace reserves only bytes to be written: mTotalSize - mExistingSize.
@@ -186,6 +187,7 @@ private:
     };
 
     Error RemoveOutdatedItems();
+    Error RemoveOldItemVersions(const String& itemID, Array<ItemInfo>& storedItems);
     Error WaitForStop();
     Error RemovePendingItems(const Array<ItemInfo>& storedItems, Array<UpdateItemStatus>& statuses);
     Error CleanupDownloadingItems(const Array<UpdateItemInfo>& currentItems, const Array<ItemInfo>& storedItems);

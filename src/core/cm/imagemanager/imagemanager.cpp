@@ -34,7 +34,7 @@ Error ImageManager::Init(AllocatorItf& allocator, const Config& config, StorageI
     mFileInfoProvider          = &fileInfoProvider;
     mOCISpec                   = &ociSpec;
 
-    auto items = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto items = MakeUnique<StaticArray<ItemInfo, cMaxNumStoredItems>>(mAllocator);
     if (!items) {
         return AOS_ERROR_WRAP(ErrorEnum::eNoMemory);
     }
@@ -127,7 +127,7 @@ Error ImageManager::DownloadUpdateItems(const Array<UpdateItemInfo>& itemsInfo,
         statuses[i].mError   = ErrorEnum::eNone;
     }
 
-    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumStoredItems>>(mAllocator);
     if (!storedItems) {
         return AOS_ERROR_WRAP(ErrorEnum::eNoMemory);
     }
@@ -217,7 +217,7 @@ Error ImageManager::InstallUpdateItems(const Array<UpdateItemInfo>& itemsInfo, A
         statuses[i].mError   = ErrorEnum::eNone;
     }
 
-    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumStoredItems>>(mAllocator);
     if (!storedItems) {
         return AOS_ERROR_WRAP(ErrorEnum::eNoMemory);
     }
@@ -297,7 +297,7 @@ Error ImageManager::GetUpdateItemsStatuses(Array<UpdateItemStatus>& statuses)
 
     LOG_DBG() << "Get update items statuses";
 
-    auto items = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto items = MakeUnique<StaticArray<ItemInfo, cMaxNumStoredItems>>(mAllocator);
     if (!items) {
         return ErrorEnum::eNoMemory;
     }
@@ -455,7 +455,7 @@ RetWithError<size_t> ImageManager::RemoveItem(const String& id, const String& ve
 
     LOG_DBG() << "Remove item" << Log::Field("id", id) << Log::Field("version", version);
 
-    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumItemVersions>>(mAllocator);
     if (!storedItems) {
         return {0, AOS_ERROR_WRAP(ErrorEnum::eNoMemory)};
     }
@@ -505,7 +505,7 @@ Error ImageManager::RemoveOutdatedItems()
 
     LOG_DBG() << "Remove outdated items";
 
-    auto items = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto items = MakeUnique<StaticArray<ItemInfo, cMaxNumStoredItems>>(mAllocator);
     if (!items) {
         return AOS_ERROR_WRAP(ErrorEnum::eNoMemory);
     }
@@ -544,6 +544,71 @@ Error ImageManager::RemoveOutdatedItems()
         auto [totalSize, err] = CleanupOrphanedBlobs();
         if (!err.IsNone()) {
             return err;
+        }
+
+        LOG_DBG() << "Cleaned up orphaned blobs" << Log::Field("size", totalSize);
+
+        mInstallSpaceAllocator->FreeSpace(totalSize);
+    }
+
+    return ErrorEnum::eNone;
+}
+
+Error ImageManager::RemoveOldItemVersions(const String& itemID, Array<ItemInfo>& storedItems)
+{
+    size_t numVersions = 0;
+
+    for (const auto& item : storedItems) {
+        if (item.mItemID == itemID) {
+            numVersions++;
+        }
+    }
+
+    bool hasRemovedItems = false;
+
+    while (numVersions >= cMaxNumItemVersions) {
+        auto oldestIt = storedItems.end();
+
+        for (auto it = storedItems.begin(); it != storedItems.end(); ++it) {
+            if (it->mItemID != itemID || it->mState != ItemStateEnum::eRemoved) {
+                continue;
+            }
+
+            if (oldestIt == storedItems.end() || it->mTimestamp < oldestIt->mTimestamp) {
+                oldestIt = it;
+            }
+        }
+
+        if (oldestIt == storedItems.end()) {
+            break;
+        }
+
+        LOG_DBG() << "Remove old item version" << Log::Field("itemID", itemID)
+                  << Log::Field("version", oldestIt->mVersion);
+
+        if (auto err = mStorage->RemoveItem(itemID, oldestIt->mVersion); !err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
+        }
+
+        if (auto err = mInstallSpaceAllocator->RestoreOutdatedItem(itemID, oldestIt->mVersion); !err.IsNone()) {
+            LOG_ERR() << "Failed to restore outdated item" << Log::Field("itemID", itemID)
+                      << Log::Field("version", oldestIt->mVersion) << Log::Field(err);
+        }
+
+        for (auto* listener : mListeners) {
+            listener->OnItemRemoved(itemID);
+        }
+
+        storedItems.Erase(oldestIt);
+
+        numVersions--;
+        hasRemovedItems = true;
+    }
+
+    if (hasRemovedItems) {
+        auto [totalSize, err] = CleanupOrphanedBlobs();
+        if (!err.IsNone()) {
+            return AOS_ERROR_WRAP(err);
         }
 
         LOG_DBG() << "Cleaned up orphaned blobs" << Log::Field("size", totalSize);
@@ -751,6 +816,11 @@ Error ImageManager::ProcessDownloadRequest(const Array<UpdateItemInfo>& itemsInf
         });
 
         if (sameVersionIt == storedItems.end()) {
+            if (auto err = RemoveOldItemVersions(itemInfo.mItemID, storedItems); !err.IsNone()) {
+                LOG_ERR() << "Failed to remove old item versions" << Log::Field("id", itemInfo.mItemID)
+                          << Log::Field(err);
+            }
+
             ItemInfo newItem;
             newItem.mItemID      = itemInfo.mItemID;
             newItem.mType        = itemInfo.mType;
@@ -1642,7 +1712,7 @@ RetWithError<size_t> ImageManager::CleanupOrphanedBlobs()
 
     size_t totalSize = 0;
 
-    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumUpdateItems>>(mAllocator);
+    auto storedItems = MakeUnique<StaticArray<ItemInfo, cMaxNumStoredItems>>(mAllocator);
     if (!storedItems) {
         return {0, AOS_ERROR_WRAP(ErrorEnum::eNoMemory)};
     }
