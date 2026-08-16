@@ -194,7 +194,7 @@
  * Port len.
  */
 #ifndef AOS_CONFIG_TYPES_PORT_LEN
-#define AOS_CONFIG_TYPES_PORT_LEN 8
+#define AOS_CONFIG_TYPES_PORT_LEN 16
 #endif
 
 /**
