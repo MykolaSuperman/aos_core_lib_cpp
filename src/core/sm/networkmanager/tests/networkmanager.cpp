@@ -504,8 +504,16 @@ TEST_F(NetworkManagerTest, CreateAndStartInstanceNetwork_ValidateAllPluginConfig
     rule1.mProto   = "tcp";
     allocatedParams.mFirewallRules.PushBack(rule1);
 
+    aos::FirewallRule rule2;
+    rule2.mDstIP   = "10.0.0.2/32";
+    rule2.mDstPort = "7400:7650";
+    rule2.mProto   = "udp";
+    allocatedParams.mFirewallRules.PushBack(rule2);
+
     params.mExposedPorts.PushBack("8080/tcp");
     params.mExposedPorts.PushBack("9090/udp");
+    params.mExposedPorts.PushBack("8089/tcp");
+    params.mExposedPorts.PushBack("9000");
 
     SetupEnsureNodeNetworkCreateMocks(networkID, allocatedParams.mSubnet, "192.168.1.1", 100ULL);
 
@@ -563,16 +571,23 @@ TEST_F(NetworkManagerTest, CreateAndStartInstanceNetwork_ValidateAllPluginConfig
     EXPECT_EQ(capturedFirewallParams.mIP, allocatedParams.mIP);
     EXPECT_TRUE(capturedFirewallParams.mAllowPublic);
 
-    ASSERT_EQ(capturedFirewallParams.mInput.Size(), 2);
+    ASSERT_EQ(capturedFirewallParams.mInput.Size(), 4);
     EXPECT_EQ(capturedFirewallParams.mInput[0].mPort, aos::String("8080"));
     EXPECT_EQ(capturedFirewallParams.mInput[0].mProtocol, aos::String("tcp"));
     EXPECT_EQ(capturedFirewallParams.mInput[1].mPort, aos::String("9090"));
     EXPECT_EQ(capturedFirewallParams.mInput[1].mProtocol, aos::String("udp"));
+    EXPECT_EQ(capturedFirewallParams.mInput[2].mPort, aos::String("8089"));
+    EXPECT_EQ(capturedFirewallParams.mInput[2].mProtocol, aos::String("tcp"));
+    EXPECT_EQ(capturedFirewallParams.mInput[3].mPort, aos::String("9000"));
+    EXPECT_EQ(capturedFirewallParams.mInput[3].mProtocol, aos::String("tcp"));
 
-    ASSERT_EQ(capturedFirewallParams.mOutput.Size(), 1);
+    ASSERT_EQ(capturedFirewallParams.mOutput.Size(), 2);
     EXPECT_EQ(capturedFirewallParams.mOutput[0].mDstIP, aos::String("10.0.0.1/32"));
     EXPECT_EQ(capturedFirewallParams.mOutput[0].mDstPort, aos::String("80"));
     EXPECT_EQ(capturedFirewallParams.mOutput[0].mProto, aos::String("tcp"));
+    EXPECT_EQ(capturedFirewallParams.mOutput[1].mDstIP, aos::String("10.0.0.2/32"));
+    EXPECT_EQ(capturedFirewallParams.mOutput[1].mDstPort, aos::String("7400:7650"));
+    EXPECT_EQ(capturedFirewallParams.mOutput[1].mProto, aos::String("udp"));
 
     EXPECT_EQ(capturedBandwidthParams.mIngressRate, params.mIngressKbit * 1000);
     EXPECT_EQ(capturedBandwidthParams.mEgressRate, params.mEgressKbit * 1000);
@@ -1470,7 +1485,9 @@ TEST_F(NetworkManagerTest, CreateInstanceNetwork_VerifyUpdateItemNetworkParams)
 
     params.mExposedPorts.PushBack("8080/tcp");
     params.mExposedPorts.PushBack("9090/udp");
+    params.mExposedPorts.PushBack("7400/udp");
     params.mAllowedConnections.PushBack("service1:80/tcp");
+    params.mAllowedConnections.PushBack("service2/7400:7650/udp");
 
     SetupEnsureNodeNetworkCreateMocks(networkID, allocatedParams.mSubnet, "192.168.1.1", 100ULL);
 
@@ -1490,13 +1507,15 @@ TEST_F(NetworkManagerTest, CreateInstanceNetwork_VerifyUpdateItemNetworkParams)
     ASSERT_EQ(mNetManager->CreateInstanceNetwork(instanceID, networkID, params), aos::ErrorEnum::eNone);
 
     // Verify exposed ports
-    ASSERT_EQ(capturedServiceData.mExposedPorts.Size(), 2U);
+    ASSERT_EQ(capturedServiceData.mExposedPorts.Size(), 3U);
     EXPECT_EQ(capturedServiceData.mExposedPorts[0], "8080/tcp");
     EXPECT_EQ(capturedServiceData.mExposedPorts[1], "9090/udp");
+    EXPECT_EQ(capturedServiceData.mExposedPorts[2], "7400/udp");
 
     // Verify allowed connections
-    ASSERT_EQ(capturedServiceData.mAllowedConnections.Size(), 1U);
+    ASSERT_EQ(capturedServiceData.mAllowedConnections.Size(), 2U);
     EXPECT_EQ(capturedServiceData.mAllowedConnections[0], "service1:80/tcp");
+    EXPECT_EQ(capturedServiceData.mAllowedConnections[1], "service2/7400:7650/udp");
 
     // Verify hosts: hostname + instance ident variants
     // Expected: test-host, 0.test-subject.test-item, 0.test-subject.test-item.test-network,
