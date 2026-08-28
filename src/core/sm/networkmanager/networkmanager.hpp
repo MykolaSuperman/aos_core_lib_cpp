@@ -258,6 +258,8 @@ private:
     Error              CreateNetwork(const NetworkInfo& network);
     Error              DeleteInstanceNetworkConfig(const String& instanceID, const String& networkID);
     Error              GenerateIfName(String& ifName, const String& ifPrefix);
+    Error              RefreshUplinkInterface();
+    Error              ReassertMasquerades();
 
     template <typename P>
     Error GenerateUniqueIfName(String& ifName, const String& ifPrefix, P&& isUnique)
@@ -287,6 +289,7 @@ private:
     InterfaceFactoryItf*                                                   mNetIfFactory {};
     aos::networkmanager::NetworkProviderItf*                               mNetworkProvider {};
     StaticString<cIDLen>                                                   mNodeID;
+    StaticString<cInterfaceLen>                                            mUplinkIfName;
     NetworkCache                                                           mRuntimeCache;
     StaticMap<StaticString<cIDLen>, NetworkInfo, cMaxNumOwners>            mNetworkProviders;
     StaticMap<StaticString<cIDLen>, DNSServerItf*, cMaxNumOwners>          mDNSServers;
