@@ -1689,6 +1689,65 @@ TEST_F(NetworkManagerTest, OnPendingFirewallUpdate_RunningInstance_CallsFirewall
     mNetManager->OnPendingFirewallUpdate("test-node", update);
 }
 
+TEST_F(NetworkManagerTest, OnPendingFirewallUpdate_KeepsRulesResolvedEarlier)
+{
+    auto params          = CreateTestInstanceNetworkConfig();
+    auto allocatedParams = CreateTestAllocatedParams();
+
+    // An allowed connection whose target was already up, so CM resolved it
+    // while allocating the instance.
+    aos::FirewallRule resolvedAtAllocation;
+    resolvedAtAllocation.mDstIP   = "10.0.0.5";
+    resolvedAtAllocation.mDstPort = "8080";
+    resolvedAtAllocation.mProto   = "udp";
+    resolvedAtAllocation.mSrcIP   = "192.168.1.2";
+    allocatedParams.mFirewallRules.PushBack(resolvedAtAllocation);
+
+    SetupEnsureNodeNetworkCreateMocks("test-network", "192.168.1.0/24", "192.168.1.1", 100);
+
+    EXPECT_CALL(mNetworkProvider, AllocateInstanceNetwork(_, _, _, _, _))
+        .WillOnce(DoAll(SetArgReferee<4>(allocatedParams), Return(aos::ErrorEnum::eNone)));
+    EXPECT_CALL(mStorage, AddInstanceNetworkInfo(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    ASSERT_EQ(mNetManager->CreateInstanceNetwork("test-instance", "test-network", params), aos::ErrorEnum::eNone);
+
+    SetupEnsureNodeNetworkPhysicalMocks("192.168.1.1", "192.168.1.0/24", 100);
+
+    EXPECT_CALL(mNetns, CreateNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mNetns, GetNetworkNamespacePath(_))
+        .WillOnce(Return(aos::RetWithError<aos::StaticString<aos::cFilePathLen>> {{}, aos::ErrorEnum::eNone}));
+    ExpectAddInstanceCalls();
+    ExpectPersistInstanceCalls();
+    EXPECT_CALL(mTrafficMonitor, StartInstanceMonitoring(_, _, _, _)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    ASSERT_EQ(mNetManager->StartInstanceNetwork("test-instance", "test-network"), aos::ErrorEnum::eNone);
+
+    // A second allowed connection, resolvable only once its own target came up.
+    // CM sends this one alone: it does not repeat the rule it handed over
+    // earlier, so the update has to be merged rather than assigned.
+    aos::networkmanager::PendingFirewallUpdate update;
+    update.mInstanceIdent = params.mInstanceIdent;
+
+    aos::FirewallRule resolvedLater;
+    resolvedLater.mDstIP   = "10.0.0.6";
+    resolvedLater.mDstPort = "8080";
+    resolvedLater.mProto   = "udp";
+    resolvedLater.mSrcIP   = "192.168.1.2";
+    update.mFirewallRules.PushBack(resolvedLater);
+
+    EXPECT_CALL(mStorage, UpdateInstanceNetworkInfo(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    InstanceFirewallParams applied;
+
+    EXPECT_CALL(mFirewall, UpdateInstance(_, _)).WillOnce(DoAll(SaveArg<1>(&applied), Return(aos::ErrorEnum::eNone)));
+
+    mNetManager->OnPendingFirewallUpdate("test-node", update);
+
+    ASSERT_EQ(applied.mOutput.Size(), 2U);
+    EXPECT_TRUE(applied.mOutput[0].mDstIP == "10.0.0.5");
+    EXPECT_TRUE(applied.mOutput[1].mDstIP == "10.0.0.6");
+}
+
 TEST_F(NetworkManagerTest, OnConnect_SyncsNetworkStateWithCM)
 {
     const aos::String instanceID = "test-instance";

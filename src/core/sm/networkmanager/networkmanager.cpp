@@ -2091,7 +2091,17 @@ void NetworkManager::OnPendingFirewallUpdate(
             return;
         }
 
-        allocatedParams->mFirewallRules = update.mFirewallRules;
+        for (const auto& rule : update.mFirewallRules) {
+            if (allocatedParams->mFirewallRules.Contains(rule)) {
+                continue;
+            }
+
+            if (auto err = allocatedParams->mFirewallRules.PushBack(rule); !err.IsNone()) {
+                LOG_ERR() << "Failed to add firewall rule" << Log::Field("instanceID", instanceID) << Log::Field(err);
+
+                return;
+            }
+        }
 
         auto info = MakeUnique<InstanceNetworkInfo>(
             mAllocator, instanceID, networkID, *networkConfig, *allocatedParams, hostIfName);
@@ -2110,7 +2120,7 @@ void NetworkManager::OnPendingFirewallUpdate(
         }
 
         if (auto it = mInstanceNetworkInfos.Find(instanceID); it != mInstanceNetworkInfos.end()) {
-            it->mSecond.mAllocatedParams.mFirewallRules = update.mFirewallRules;
+            it->mSecond.mAllocatedParams.mFirewallRules = allocatedParams->mFirewallRules;
         }
     }
 
