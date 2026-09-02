@@ -206,10 +206,12 @@ Error NetworkManager::CreateInstanceNetwork(
 
     Error err;
 
-    auto rollbackCache = DeferRelease(&instanceID, [this, &err](const String* id) {
+    auto rollbackCache = DeferRelease(&instanceID, [this, &err, &instanceNetworkParameters](const String* id) {
         if (!err.IsNone()) {
             LockGuard lock {mMutex};
+
             mInstanceNetworkInfos.Remove(*id);
+            TakeDeferredFirewallRules(instanceNetworkParameters.mInstanceIdent, nullptr);
         }
     });
 
@@ -259,14 +261,16 @@ Error NetworkManager::CreateInstanceNetwork(
         return err;
     }
 
-    if (err = mStorage->AddInstanceNetworkInfo(*info); !err.IsNone()) {
-        return AOS_ERROR_WRAP(err);
-    }
-
     {
         LockGuard lock {mMutex};
 
+        TakeDeferredFirewallRules(instanceNetworkParameters.mInstanceIdent, &info->mAllocatedParams);
+
         mInstanceNetworkInfos.Set(instanceID, *info);
+    }
+
+    if (err = mStorage->AddInstanceNetworkInfo(*info); !err.IsNone()) {
+        return AOS_ERROR_WRAP(err);
     }
 
     return ErrorEnum::eNone;
@@ -2031,6 +2035,62 @@ Error NetworkManager::GenerateIfName(String& ifName, const String& ifPrefix)
     return ErrorEnum::eNone;
 }
 
+void NetworkManager::DeferFirewallUpdate(const aos::networkmanager::PendingFirewallUpdate& update)
+{
+    LOG_DBG() << "Defer firewall update" << Log::Field("instanceIdent", update.mInstanceIdent)
+              << Log::Field("rulesCount", update.mFirewallRules.Size());
+
+    for (auto& deferred : mDeferredFirewallUpdates) {
+        if (deferred.mInstanceIdent != update.mInstanceIdent) {
+            continue;
+        }
+
+        for (const auto& rule : update.mFirewallRules) {
+            if (deferred.mFirewallRules.Contains(rule)) {
+                continue;
+            }
+
+            if (auto err = deferred.mFirewallRules.PushBack(rule); !err.IsNone()) {
+                LOG_ERR() << "Failed to defer firewall rule" << Log::Field("instanceIdent", update.mInstanceIdent)
+                          << Log::Field(err);
+            }
+        }
+
+        return;
+    }
+
+    if (auto err = mDeferredFirewallUpdates.PushBack(update); !err.IsNone()) {
+        LOG_ERR() << "Failed to defer firewall update" << Log::Field("instanceIdent", update.mInstanceIdent)
+                  << Log::Field(err);
+    }
+}
+
+void NetworkManager::TakeDeferredFirewallRules(const InstanceIdent& instanceIdent, InstanceNetworkAllocation* params)
+{
+    for (auto it = mDeferredFirewallUpdates.begin(); it != mDeferredFirewallUpdates.end(); ++it) {
+        if (it->mInstanceIdent != instanceIdent) {
+            continue;
+        }
+
+        if (params != nullptr) {
+            for (const auto& rule : it->mFirewallRules) {
+                if (params->mFirewallRules.Contains(rule)) {
+                    continue;
+                }
+
+                if (auto err = params->mFirewallRules.PushBack(rule); !err.IsNone()) {
+                    LOG_ERR() << "Failed to apply deferred firewall rule" << Log::Field("instanceIdent", instanceIdent)
+                              << Log::Field(err);
+                }
+            }
+        }
+
+        mDeferredFirewallUpdates.Erase(it);
+
+        return;
+    }
+}
+
 void NetworkManager::OnPendingFirewallUpdate(
     const String& nodeID, const aos::networkmanager::PendingFirewallUpdate& update)
 {
@@ -2085,8 +2145,7 @@ void NetworkManager::OnPendingFirewallUpdate(
         }
 
         if (instanceID.IsEmpty()) {
-            LOG_WRN() << "Instance not found for pending firewall update"
-                      << Log::Field("instanceIdent", update.mInstanceIdent);
+            DeferFirewallUpdate(update);
 
             return;
         }

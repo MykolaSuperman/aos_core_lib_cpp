@@ -1748,6 +1748,61 @@ TEST_F(NetworkManagerTest, OnPendingFirewallUpdate_KeepsRulesResolvedEarlier)
     EXPECT_TRUE(applied.mOutput[1].mDstIP == "10.0.0.6");
 }
 
+TEST_F(NetworkManagerTest, OnPendingFirewallUpdate_AppliesRulesArrivedBeforeInstance)
+{
+    auto params          = CreateTestInstanceNetworkConfig();
+    auto allocatedParams = CreateTestAllocatedParams();
+
+    aos::networkmanager::PendingFirewallUpdate update;
+    update.mInstanceIdent = params.mInstanceIdent;
+
+    aos::FirewallRule resolvedWhileAllocating;
+    resolvedWhileAllocating.mDstIP   = "10.0.0.7";
+    resolvedWhileAllocating.mDstPort = "8080";
+    resolvedWhileAllocating.mProto   = "udp";
+    resolvedWhileAllocating.mSrcIP   = "192.168.1.2";
+    update.mFirewallRules.PushBack(resolvedWhileAllocating);
+
+    EXPECT_CALL(mFirewall, UpdateInstance(_, _)).Times(0);
+
+    mNetManager->OnPendingFirewallUpdate("test-node", update);
+
+    SetupEnsureNodeNetworkCreateMocks("test-network", "192.168.1.0/24", "192.168.1.1", 100);
+
+    EXPECT_CALL(mNetworkProvider, AllocateInstanceNetwork(_, _, _, _, _))
+        .WillOnce(DoAll(SetArgReferee<4>(allocatedParams), Return(aos::ErrorEnum::eNone)));
+    EXPECT_CALL(mStorage, AddInstanceNetworkInfo(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    ASSERT_EQ(mNetManager->CreateInstanceNetwork("test-instance", "test-network", params), aos::ErrorEnum::eNone);
+
+    SetupEnsureNodeNetworkPhysicalMocks("192.168.1.1", "192.168.1.0/24", 100);
+
+    EXPECT_CALL(mNetns, CreateNetworkNamespace(_)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mNetns, GetNetworkNamespacePath(_))
+        .WillOnce(Return(aos::RetWithError<aos::StaticString<aos::cFilePathLen>> {{}, aos::ErrorEnum::eNone}));
+
+    BridgeAttachResult attachResult;
+    attachResult.mHostIfName      = "veth-test";
+    attachResult.mContainerIfName = "eth0";
+
+    EXPECT_CALL(mBridgeNetwork, Attach(_, _, _))
+        .WillOnce(DoAll(SetArgReferee<2>(attachResult), Return(aos::ErrorEnum::eNone)));
+    EXPECT_CALL(mBandwidth, Apply(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
+    EXPECT_CALL(mDNSServer, AddHost(_, _)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    InstanceFirewallParams applied;
+
+    EXPECT_CALL(mFirewall, AddInstance(_, _)).WillOnce(DoAll(SaveArg<1>(&applied), Return(aos::ErrorEnum::eNone)));
+
+    ExpectPersistInstanceCalls();
+    EXPECT_CALL(mTrafficMonitor, StartInstanceMonitoring(_, _, _, _)).WillOnce(Return(aos::ErrorEnum::eNone));
+
+    ASSERT_EQ(mNetManager->StartInstanceNetwork("test-instance", "test-network"), aos::ErrorEnum::eNone);
+
+    ASSERT_EQ(applied.mOutput.Size(), 1U);
+    EXPECT_TRUE(applied.mOutput[0].mDstIP == "10.0.0.7");
+}
+
 TEST_F(NetworkManagerTest, OnConnect_SyncsNetworkStateWithCM)
 {
     const aos::String instanceID = "test-instance";
